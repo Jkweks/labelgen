@@ -26,6 +26,7 @@ const emptyTemplateForm = {
   accent_color: '#0a3d62',
   text_align: 'left',
   include_description: true,
+  parts_per_label: 1,
 };
 
 const emptyLabelForm = {
@@ -38,6 +39,13 @@ const emptyLabelForm = {
   notes: '',
   default_copies: 1,
   template_id: '',
+  manufacturer_right: '',
+  part_number_right: '',
+  description_right: '',
+  stock_quantity_right: 0,
+  bin_location_right: '',
+  image_url_right: '',
+  notes_right: '',
 };
 
 function App() {
@@ -59,6 +67,12 @@ function App() {
         .map(([id, value]) => ({ id: Number(id), copies: value.copies || 1 })),
     [printSelection],
   );
+
+  const selectedTemplate = useMemo(
+    () => templates.find((template) => template.id === Number(labelForm.template_id)),
+    [templates, labelForm.template_id],
+  );
+  const requiresDualParts = selectedTemplate?.parts_per_label === 2;
 
   useEffect(() => {
     loadAll();
@@ -125,7 +139,8 @@ function App() {
     const { name, value, type, checked } = event.target;
     setTemplateForm((form) => ({
       ...form,
-      [name]: type === 'checkbox' ? checked : value,
+      [name]:
+        type === 'checkbox' ? checked : name === 'parts_per_label' ? Number(value) : value,
     }));
   }
 
@@ -133,7 +148,10 @@ function App() {
     const { name, value } = event.target;
     setLabelForm((form) => ({
       ...form,
-      [name]: name === 'stock_quantity' || name === 'default_copies' ? Number(value) : value,
+      [name]:
+        name === 'stock_quantity' || name === 'default_copies' || name === 'stock_quantity_right'
+          ? Number(value)
+          : value,
     }));
   }
 
@@ -170,10 +188,30 @@ function App() {
       return;
     }
 
+    if (requiresDualParts) {
+      if (!labelForm.manufacturer_right.trim() || !labelForm.part_number_right.trim()) {
+        setError('Enter manufacturer and part number for the right side');
+        return;
+      }
+    }
+
     const payload = {
       ...labelForm,
       template_id: Number(labelForm.template_id),
+      stock_quantity: Number(labelForm.stock_quantity) || 0,
+      default_copies: Number(labelForm.default_copies) || 1,
+      stock_quantity_right: Number(labelForm.stock_quantity_right) || 0,
     };
+
+    if (!requiresDualParts) {
+      payload.manufacturer_right = '';
+      payload.part_number_right = '';
+      payload.description_right = '';
+      payload.stock_quantity_right = 0;
+      payload.bin_location_right = '';
+      payload.image_url_right = '';
+      payload.notes_right = '';
+    }
 
     const method = editingLabelId ? 'PUT' : 'POST';
     const url = editingLabelId
@@ -206,6 +244,7 @@ function App() {
       accent_color: template.accent_color,
       text_align: template.text_align,
       include_description: Boolean(template.include_description),
+      parts_per_label: template.parts_per_label || 1,
     });
   }
 
@@ -237,6 +276,13 @@ function App() {
       notes: label.notes || '',
       default_copies: label.default_copies || 1,
       template_id: label.template_id,
+      manufacturer_right: label.manufacturer_right || '',
+      part_number_right: label.part_number_right || '',
+      description_right: label.description_right || '',
+      stock_quantity_right: label.stock_quantity_right || 0,
+      bin_location_right: label.bin_location_right || '',
+      image_url_right: label.image_url_right || '',
+      notes_right: label.notes_right || '',
     });
   }
 
@@ -373,6 +419,16 @@ function App() {
               <option value="right">Right</option>
             </select>
           </label>
+          <label>
+            Parts per label
+            <select name="parts_per_label" value={templateForm.parts_per_label} onChange={handleTemplateChange}>
+              <option value={1}>Single part</option>
+              <option value={2}>Two parts (left &amp; right)</option>
+            </select>
+          </label>
+          <p className="form-hint">
+            Dual templates split the printable area so two parts can share one label.
+          </p>
           <label className="checkbox">
             <input
               type="checkbox"
@@ -392,7 +448,7 @@ function App() {
           <div className="table-row table-head">
             <span>Name</span>
             <span>Accent</span>
-            <span>Image</span>
+            <span>Layout</span>
             <span>Description</span>
             <span className="actions">Actions</span>
           </div>
@@ -403,7 +459,12 @@ function App() {
                 <span className="swatch" style={{ backgroundColor: template.accent_color }} />
                 {template.accent_color}
               </span>
-              <span>{template.image_position}</span>
+              <span className="stacked">
+                <span className="pill">{template.image_position}</span>
+                <span className="muted">
+                  {template.parts_per_label === 2 ? 'Two parts' : 'Single part'}
+                </span>
+              </span>
               <span>{template.include_description ? 'Includes description' : 'No description'}</span>
               <span className="actions">
                 <button type="button" onClick={() => editTemplate(template)}>
@@ -430,14 +491,6 @@ function App() {
         </div>
         <form className="grid" onSubmit={submitLabel}>
           <label>
-            Manufacturer
-            <input name="manufacturer" value={labelForm.manufacturer} onChange={handleLabelChange} required />
-          </label>
-          <label>
-            Part number
-            <input name="part_number" value={labelForm.part_number} onChange={handleLabelChange} required />
-          </label>
-          <label>
             Template
             <select name="template_id" value={labelForm.template_id} onChange={handleLabelChange} required>
               <option value="">Select template</option>
@@ -449,20 +502,6 @@ function App() {
             </select>
           </label>
           <label>
-            Quantity on hand
-            <input
-              name="stock_quantity"
-              type="number"
-              min="0"
-              value={labelForm.stock_quantity}
-              onChange={handleLabelChange}
-            />
-          </label>
-          <label>
-            Bin location
-            <input name="bin_location" value={labelForm.bin_location} onChange={handleLabelChange} />
-          </label>
-          <label>
             Default copies
             <input
               name="default_copies"
@@ -472,18 +511,115 @@ function App() {
               onChange={handleLabelChange}
             />
           </label>
+          {selectedTemplate && (
+            <p className="form-hint">
+              {requiresDualParts
+                ? 'Two parts will be printed on each label. Provide details for both sides below.'
+                : 'This template prints a single part per label.'}
+            </p>
+          )}
+          <div className="form-divider">Left side details</div>
           <label>
-            Image URL
+            Manufacturer (left side)
+            <input name="manufacturer" value={labelForm.manufacturer} onChange={handleLabelChange} required />
+          </label>
+          <label>
+            Part number (left side)
+            <input name="part_number" value={labelForm.part_number} onChange={handleLabelChange} required />
+          </label>
+          <label>
+            Quantity on hand (left side)
+            <input
+              name="stock_quantity"
+              type="number"
+              min="0"
+              value={labelForm.stock_quantity}
+              onChange={handleLabelChange}
+            />
+          </label>
+          <label>
+            Bin location (left side)
+            <input name="bin_location" value={labelForm.bin_location} onChange={handleLabelChange} />
+          </label>
+          <label>
+            Image URL (left side)
             <input name="image_url" value={labelForm.image_url} onChange={handleLabelChange} />
           </label>
           <label>
-            Description
+            Description (left side)
             <input name="description" value={labelForm.description} onChange={handleLabelChange} />
           </label>
           <label className="full">
-            Notes
+            Notes (left side)
             <textarea name="notes" value={labelForm.notes} onChange={handleLabelChange} rows={3} />
           </label>
+          {requiresDualParts && (
+            <>
+              <div className="form-divider">Right side details</div>
+              <p className="form-subtext">These fields populate the right half of the label.</p>
+              <label>
+                Manufacturer (right side)
+                <input
+                  name="manufacturer_right"
+                  value={labelForm.manufacturer_right}
+                  onChange={handleLabelChange}
+                  required={requiresDualParts}
+                />
+              </label>
+              <label>
+                Part number (right side)
+                <input
+                  name="part_number_right"
+                  value={labelForm.part_number_right}
+                  onChange={handleLabelChange}
+                  required={requiresDualParts}
+                />
+              </label>
+              <label>
+                Quantity on hand (right side)
+                <input
+                  name="stock_quantity_right"
+                  type="number"
+                  min="0"
+                  value={labelForm.stock_quantity_right}
+                  onChange={handleLabelChange}
+                />
+              </label>
+              <label>
+                Bin location (right side)
+                <input
+                  name="bin_location_right"
+                  value={labelForm.bin_location_right}
+                  onChange={handleLabelChange}
+                />
+              </label>
+              <label>
+                Image URL (right side)
+                <input
+                  name="image_url_right"
+                  value={labelForm.image_url_right}
+                  onChange={handleLabelChange}
+                />
+              </label>
+              <label>
+                Description (right side)
+                <input
+                  name="description_right"
+                  value={labelForm.description_right}
+                  onChange={handleLabelChange}
+                />
+              </label>
+              <label className="full">
+                Notes (right side)
+                <textarea
+                  name="notes_right"
+                  value={labelForm.notes_right}
+                  onChange={handleLabelChange}
+                  rows={3}
+                />
+              </label>
+            </>
+          )}
           <button type="submit" className="primary">
             {editingLabelId ? 'Update label' : 'Create label'}
           </button>
@@ -508,9 +644,22 @@ function App() {
                   onChange={() => toggleLabelSelection(label)}
                 />
               </span>
-              <span>{label.manufacturer}</span>
-              <span>{label.part_number}</span>
-              <span>{label.template?.name || '—'}</span>
+              <span className="stacked">
+                <span>{label.manufacturer}</span>
+                {label.template?.parts_per_label === 2 && (
+                  <span className="muted">Right: {label.manufacturer_right || '—'}</span>
+                )}
+              </span>
+              <span className="stacked">
+                <span>{label.part_number}</span>
+                {label.template?.parts_per_label === 2 && (
+                  <span className="muted">Right: {label.part_number_right || '—'}</span>
+                )}
+              </span>
+              <span className="stacked">
+                <span>{label.template?.name || '—'}</span>
+                {label.template?.parts_per_label === 2 && <span className="muted">Two parts</span>}
+              </span>
               <span className="copies-cell">
                 <input
                   type="number"

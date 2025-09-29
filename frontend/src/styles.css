@@ -126,6 +126,29 @@ label.full {
   grid-column: 1 / -1;
 }
 
+.form-hint {
+  grid-column: 1 / -1;
+  margin: 0.25rem 0 0.5rem;
+  font-size: 0.9rem;
+  color: #516079;
+}
+
+.form-divider {
+  grid-column: 1 / -1;
+  margin: 0.5rem 0 0.35rem;
+  padding-top: 0.35rem;
+  border-top: 1px dashed #d0d7e3;
+  font-weight: 700;
+  color: #1f2937;
+}
+
+.form-subtext {
+  grid-column: 1 / -1;
+  margin: -0.25rem 0 0.75rem;
+  font-size: 0.9rem;
+  color: #64748b;
+}
+
 .checkbox {
   flex-direction: row;
   align-items: center;
@@ -186,6 +209,29 @@ label.full {
   display: flex;
   align-items: center;
   gap: 0.5rem;
+}
+
+.stacked {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.25rem;
+}
+
+.muted {
+  color: #64748b;
+  font-size: 0.9rem;
+}
+
+.pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.1rem 0.5rem;
+  border-radius: 999px;
+  background: #eef2ff;
+  font-weight: 600;
+  text-transform: capitalize;
+  font-size: 0.85rem;
 }
 
 .table-row .actions {

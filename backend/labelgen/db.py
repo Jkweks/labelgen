@@ -41,7 +41,8 @@ def init_db() -> None:
             image_position TEXT NOT NULL DEFAULT 'left',
             accent_color TEXT NOT NULL DEFAULT '#0a3d62',
             text_align TEXT NOT NULL DEFAULT 'left',
-            include_description INTEGER NOT NULL DEFAULT 1
+            include_description INTEGER NOT NULL DEFAULT 1,
+            parts_per_label INTEGER NOT NULL DEFAULT 1
         );
 
         CREATE TABLE IF NOT EXISTS label (
@@ -55,6 +56,13 @@ def init_db() -> None:
             image_url TEXT,
             notes TEXT,
             default_copies INTEGER NOT NULL DEFAULT 1,
+            manufacturer_right TEXT,
+            part_number_right TEXT,
+            description_right TEXT,
+            stock_quantity_right INTEGER NOT NULL DEFAULT 0,
+            bin_location_right TEXT,
+            image_url_right TEXT,
+            notes_right TEXT,
             FOREIGN KEY(template_id) REFERENCES template(id) ON DELETE CASCADE
         );
 
@@ -62,6 +70,33 @@ def init_db() -> None:
         CREATE INDEX IF NOT EXISTS idx_label_part_number ON label(part_number);
         """
     )
+    database.commit()
+
+    template_columns = {
+        row["name"] for row in database.execute("PRAGMA table_info(template)")
+    }
+    if "parts_per_label" not in template_columns:
+        database.execute(
+            "ALTER TABLE template ADD COLUMN parts_per_label INTEGER NOT NULL DEFAULT 1"
+        )
+
+    label_columns = {row["name"] for row in database.execute("PRAGMA table_info(label)")}
+    if "manufacturer_right" not in label_columns:
+        database.execute("ALTER TABLE label ADD COLUMN manufacturer_right TEXT")
+    if "part_number_right" not in label_columns:
+        database.execute("ALTER TABLE label ADD COLUMN part_number_right TEXT")
+    if "description_right" not in label_columns:
+        database.execute("ALTER TABLE label ADD COLUMN description_right TEXT")
+    if "stock_quantity_right" not in label_columns:
+        database.execute(
+            "ALTER TABLE label ADD COLUMN stock_quantity_right INTEGER NOT NULL DEFAULT 0"
+        )
+    if "bin_location_right" not in label_columns:
+        database.execute("ALTER TABLE label ADD COLUMN bin_location_right TEXT")
+    if "image_url_right" not in label_columns:
+        database.execute("ALTER TABLE label ADD COLUMN image_url_right TEXT")
+    if "notes_right" not in label_columns:
+        database.execute("ALTER TABLE label ADD COLUMN notes_right TEXT")
     database.commit()
 
     seed_default_templates()
@@ -83,6 +118,7 @@ def seed_default_templates() -> None:
             "accent_color": "#0a3d62",
             "text_align": "left",
             "include_description": 1,
+            "parts_per_label": 1,
         },
         {
             "name": "Poster",
@@ -91,13 +127,30 @@ def seed_default_templates() -> None:
             "accent_color": "#b33939",
             "text_align": "center",
             "include_description": 1,
+            "parts_per_label": 1,
         },
     )
 
     database.executemany(
         """
-        INSERT INTO template (name, description, image_position, accent_color, text_align, include_description)
-        VALUES (:name, :description, :image_position, :accent_color, :text_align, :include_description)
+        INSERT INTO template (
+            name,
+            description,
+            image_position,
+            accent_color,
+            text_align,
+            include_description,
+            parts_per_label
+        )
+        VALUES (
+            :name,
+            :description,
+            :image_position,
+            :accent_color,
+            :text_align,
+            :include_description,
+            :parts_per_label
+        )
         """,
         templates,
     )
@@ -130,7 +183,8 @@ def upsert_template(data: Mapping[str, object]) -> int:
                    image_position = :image_position,
                    accent_color = :accent_color,
                    text_align = :text_align,
-                   include_description = :include_description
+                   include_description = :include_description,
+                   parts_per_label = :parts_per_label
              WHERE id = :id
             """,
             data,
@@ -139,8 +193,24 @@ def upsert_template(data: Mapping[str, object]) -> int:
     else:
         cursor = database.execute(
             """
-            INSERT INTO template (name, description, image_position, accent_color, text_align, include_description)
-            VALUES (:name, :description, :image_position, :accent_color, :text_align, :include_description)
+            INSERT INTO template (
+                name,
+                description,
+                image_position,
+                accent_color,
+                text_align,
+                include_description,
+                parts_per_label
+            )
+            VALUES (
+                :name,
+                :description,
+                :image_position,
+                :accent_color,
+                :text_align,
+                :include_description,
+                :parts_per_label
+            )
             """,
             data,
         )
@@ -160,7 +230,7 @@ def fetch_labels() -> list[sqlite3.Row]:
     return database.execute(
         """
         SELECT label.*, template.name AS template_name, template.image_position, template.accent_color,
-               template.text_align, template.include_description
+               template.text_align, template.include_description, template.parts_per_label
           FROM label
           JOIN template ON template.id = label.template_id
          ORDER BY label.manufacturer COLLATE NOCASE, label.part_number COLLATE NOCASE
@@ -189,7 +259,14 @@ def create_label(data: Mapping[str, object]) -> int:
             bin_location,
             image_url,
             notes,
-            default_copies
+            default_copies,
+            manufacturer_right,
+            part_number_right,
+            description_right,
+            stock_quantity_right,
+            bin_location_right,
+            image_url_right,
+            notes_right
         ) VALUES (
             :template_id,
             :manufacturer,
@@ -199,7 +276,14 @@ def create_label(data: Mapping[str, object]) -> int:
             :bin_location,
             :image_url,
             :notes,
-            :default_copies
+            :default_copies,
+            :manufacturer_right,
+            :part_number_right,
+            :description_right,
+            :stock_quantity_right,
+            :bin_location_right,
+            :image_url_right,
+            :notes_right
         )
         """,
         data,
@@ -223,7 +307,7 @@ def fetch_label_with_template(label_id: int) -> sqlite3.Row | None:
     return database.execute(
         """
         SELECT label.*, template.name AS template_name, template.image_position, template.accent_color,
-               template.text_align, template.include_description
+               template.text_align, template.include_description, template.parts_per_label
           FROM label
           JOIN template ON template.id = label.template_id
          WHERE label.id = ?
