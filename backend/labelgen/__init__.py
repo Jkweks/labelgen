@@ -46,6 +46,7 @@ def create_app(test_config: dict[str, Any] | None = None) -> Flask:
             "accent_color": record["accent_color"],
             "text_align": record["text_align"],
             "include_description": bool(record["include_description"]),
+            "parts_per_label": int(record["parts_per_label"] or 1),
         }
 
     def serialize_label(record: Any) -> dict[str, Any]:
@@ -60,12 +61,20 @@ def create_app(test_config: dict[str, Any] | None = None) -> Flask:
             "image_url": record["image_url"],
             "notes": record["notes"],
             "default_copies": int(record["default_copies"] or 1),
+            "manufacturer_right": record["manufacturer_right"],
+            "part_number_right": record["part_number_right"],
+            "description_right": record["description_right"],
+            "stock_quantity_right": int(record["stock_quantity_right"] or 0),
+            "bin_location_right": record["bin_location_right"],
+            "image_url_right": record["image_url_right"],
+            "notes_right": record["notes_right"],
             "template": {
                 "name": record["template_name"],
                 "image_position": record["image_position"],
                 "accent_color": record["accent_color"],
                 "text_align": record["text_align"],
                 "include_description": bool(record["include_description"]),
+                "parts_per_label": int(record["parts_per_label"] or 1),
             },
         }
 
@@ -108,6 +117,13 @@ def create_app(test_config: dict[str, Any] | None = None) -> Flask:
             "text_align": payload.get("text_align") or "left",
             "include_description": 1 if payload.get("include_description", True) else 0,
         }
+        try:
+            parts_value = int(payload.get("parts_per_label") or 1)
+        except (TypeError, ValueError):
+            raise BadRequest("parts_per_label must be a number")
+        if parts_value not in (1, 2):
+            raise BadRequest("parts_per_label must be 1 or 2")
+        data["parts_per_label"] = parts_value
         template_id = db.upsert_template(data)
         template = db.fetch_template(template_id)
         if template is None:
@@ -133,6 +149,13 @@ def create_app(test_config: dict[str, Any] | None = None) -> Flask:
             "text_align": payload.get("text_align") or "left",
             "include_description": 1 if payload.get("include_description", True) else 0,
         }
+        try:
+            parts_value = int(payload.get("parts_per_label") or 1)
+        except (TypeError, ValueError):
+            raise BadRequest("parts_per_label must be a number")
+        if parts_value not in (1, 2):
+            raise BadRequest("parts_per_label must be 1 or 2")
+        data["parts_per_label"] = parts_value
         db.upsert_template(data)
         template = db.fetch_template(template_id)
         if template is None:
@@ -157,8 +180,10 @@ def create_app(test_config: dict[str, Any] | None = None) -> Flask:
         template_id = int(payload.get("template_id") or 0)
         if template_id <= 0:
             raise BadRequest("template_id is required")
-        if not db.fetch_template(template_id):
+        template_record = db.fetch_template(template_id)
+        if not template_record:
             raise NotFound("Template not found")
+        parts_per_label = int(template_record["parts_per_label"] or 1)
 
         manufacturer = (payload.get("manufacturer") or "").strip()
         part_number = (payload.get("part_number") or "").strip()
@@ -175,7 +200,26 @@ def create_app(test_config: dict[str, Any] | None = None) -> Flask:
             "image_url": (payload.get("image_url") or "").strip() or None,
             "notes": (payload.get("notes") or "").strip() or None,
             "default_copies": max(1, int(payload.get("default_copies") or 1)),
+            "manufacturer_right": None,
+            "part_number_right": None,
+            "description_right": None,
+            "stock_quantity_right": 0,
+            "bin_location_right": None,
+            "image_url_right": None,
+            "notes_right": None,
         }
+        if parts_per_label == 2:
+            manufacturer_right = (payload.get("manufacturer_right") or "").strip()
+            part_number_right = (payload.get("part_number_right") or "").strip()
+            if not manufacturer_right or not part_number_right:
+                raise BadRequest("Right-side manufacturer and part number are required")
+            data["manufacturer_right"] = manufacturer_right
+            data["part_number_right"] = part_number_right
+            data["description_right"] = (payload.get("description_right") or "").strip() or None
+            data["stock_quantity_right"] = int(payload.get("stock_quantity_right") or 0)
+            data["bin_location_right"] = (payload.get("bin_location_right") or "").strip() or None
+            data["image_url_right"] = (payload.get("image_url_right") or "").strip() or None
+            data["notes_right"] = (payload.get("notes_right") or "").strip() or None
         label_id = db.create_label(data)
         label = db.fetch_label_with_template(label_id)
         if label is None:
@@ -184,7 +228,8 @@ def create_app(test_config: dict[str, Any] | None = None) -> Flask:
 
     @app.put("/api/labels/<int:label_id>")
     def update_label(label_id: int):
-        if not db.fetch_label(label_id):
+        existing_label = db.fetch_label(label_id)
+        if not existing_label:
             raise NotFound("Label not found")
 
         payload = request.get_json(silent=True) or {}
@@ -196,13 +241,20 @@ def create_app(test_config: dict[str, Any] | None = None) -> Flask:
             "bin_location",
             "image_url",
             "notes",
+            "manufacturer_right",
+            "part_number_right",
+            "description_right",
+            "bin_location_right",
+            "image_url_right",
+            "notes_right",
         ):
             if key in payload:
                 value = (payload.get(key) or "").strip()
                 updates[key] = value or None
-        for key in ("stock_quantity", "default_copies"):
+        for key in ("stock_quantity", "default_copies", "stock_quantity_right"):
             if key in payload:
-                updates[key] = int(payload.get(key) or 0)
+                raw_value = int(payload.get(key) or 0)
+                updates[key] = max(1, raw_value) if key == "default_copies" else raw_value
         if "template_id" in payload:
             template_id = int(payload.get("template_id") or 0)
             if template_id <= 0:
@@ -213,6 +265,35 @@ def create_app(test_config: dict[str, Any] | None = None) -> Flask:
 
         if not updates:
             raise BadRequest("No fields provided for update")
+
+        target_template_id = updates.get("template_id", existing_label["template_id"])
+        template_record = db.fetch_template(target_template_id)
+        if not template_record:
+            raise NotFound("Template not found")
+        parts_per_label = int(template_record["parts_per_label"] or 1)
+        if parts_per_label == 2:
+            final_manufacturer_right = (
+                updates.get("manufacturer_right")
+                if "manufacturer_right" in updates
+                else existing_label["manufacturer_right"]
+            )
+            final_part_number_right = (
+                updates.get("part_number_right")
+                if "part_number_right" in updates
+                else existing_label["part_number_right"]
+            )
+            if not final_manufacturer_right or not final_part_number_right:
+                raise BadRequest(
+                    "Right-side manufacturer and part number are required for this template"
+                )
+        else:
+            updates["manufacturer_right"] = None
+            updates["part_number_right"] = None
+            updates["description_right"] = None
+            updates["bin_location_right"] = None
+            updates["image_url_right"] = None
+            updates["notes_right"] = None
+            updates["stock_quantity_right"] = 0
 
         db.update_label(label_id, updates)
         label = db.fetch_label_with_template(label_id)
@@ -258,8 +339,9 @@ def create_app(test_config: dict[str, Any] | None = None) -> Flask:
                 accent_color=label["accent_color"],
                 text_align=label["text_align"],
                 include_description=bool(label["include_description"]),
+                parts_per_label=int(label["parts_per_label"] or 1),
             )
-            label_data = pdf.LabelData(
+            left_part = pdf.PartDetails(
                 manufacturer=label["manufacturer"],
                 part_number=label["part_number"],
                 stock_quantity=int(label["stock_quantity"] or 0),
@@ -267,6 +349,25 @@ def create_app(test_config: dict[str, Any] | None = None) -> Flask:
                 bin_location=label["bin_location"],
                 image_url=label["image_url"],
                 notes=label["notes"],
+            )
+            right_part = None
+            if template_config.parts_per_label == 2:
+                if not label["manufacturer_right"] or not label["part_number_right"]:
+                    raise BadRequest(
+                        f"Label {label_id} is missing right-side details required by its template"
+                    )
+                right_part = pdf.PartDetails(
+                    manufacturer=label["manufacturer_right"],
+                    part_number=label["part_number_right"],
+                    stock_quantity=int(label["stock_quantity_right"] or 0),
+                    description=label["description_right"],
+                    bin_location=label["bin_location_right"],
+                    image_url=label["image_url_right"],
+                    notes=label["notes_right"],
+                )
+            label_data = pdf.LabelData(
+                left=left_part,
+                right=right_part,
                 template=template_config,
             )
             chosen.append((label_data, max(1, copies_value)))
