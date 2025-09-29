@@ -73,6 +73,8 @@ function App() {
     [templates, labelForm.template_id],
   );
   const requiresDualParts = selectedTemplate?.parts_per_label === 2;
+  const leftDividerLabel = requiresDualParts ? 'Left side details' : 'Part details';
+  const leftSideSuffix = requiresDualParts ? ' (left side)' : '';
 
   useEffect(() => {
     loadAll();
@@ -518,17 +520,17 @@ function App() {
                 : 'This template prints a single part per label.'}
             </p>
           )}
-          <div className="form-divider">Left side details</div>
+          <div className="form-divider">{leftDividerLabel}</div>
           <label>
-            Manufacturer (left side)
+            {`Manufacturer${leftSideSuffix}`}
             <input name="manufacturer" value={labelForm.manufacturer} onChange={handleLabelChange} required />
           </label>
           <label>
-            Part number (left side)
+            {`Part number${leftSideSuffix}`}
             <input name="part_number" value={labelForm.part_number} onChange={handleLabelChange} required />
           </label>
           <label>
-            Quantity on hand (left side)
+            {`Quantity on hand${leftSideSuffix}`}
             <input
               name="stock_quantity"
               type="number"
@@ -538,19 +540,19 @@ function App() {
             />
           </label>
           <label>
-            Bin location (left side)
+            {`Bin location${leftSideSuffix}`}
             <input name="bin_location" value={labelForm.bin_location} onChange={handleLabelChange} />
           </label>
           <label>
-            Image URL (left side)
+            {`Image URL${leftSideSuffix}`}
             <input name="image_url" value={labelForm.image_url} onChange={handleLabelChange} />
           </label>
           <label>
-            Description (left side)
+            {`Description${leftSideSuffix}`}
             <input name="description" value={labelForm.description} onChange={handleLabelChange} />
           </label>
           <label className="full">
-            Notes (left side)
+            {`Notes${leftSideSuffix}`}
             <textarea name="notes" value={labelForm.notes} onChange={handleLabelChange} rows={3} />
           </label>
           {requiresDualParts && (

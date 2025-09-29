@@ -247,10 +247,6 @@ def draw_label(
     inner_width = width - 2 * padding
     inner_height = height - 2 * padding
 
-    canv.setStrokeColor(colors.Color(0.65, 0.65, 0.65))
-    canv.setLineWidth(1)
-    canv.roundRect(x + 2, y + 2, width - 4, height - 4, radius=8, stroke=1, fill=0)
-
     template = label.template
     accent = _hex_to_color(template.accent_color)
     is_split = template.parts_per_label == 2 and label.right is not None
@@ -302,7 +298,7 @@ def draw_label(
             image_cache,
             accent,
             is_split=False,
-            use_placeholder=True,
+            use_placeholder=False,
         )
 
 
