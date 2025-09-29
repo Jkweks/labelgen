@@ -1,0 +1,143 @@
+{% extends "base.html" %}
+{% block title %}Labels · Label Generator{% endblock %}
+{% block content %}
+<section class="panel">
+  <h2>Add a label to the library</h2>
+  <p class="panel-intro">Store every part in one place. Add an image URL, capture the manufacturer and part number, and set a default number of labels to print.</p>
+  <form method="post" class="grid-form">
+    <label>
+      Manufacturer
+      <input type="text" name="manufacturer" required>
+    </label>
+    <label>
+      Part number
+      <input type="text" name="part_number" required>
+    </label>
+    <label>
+      Stock quantity
+      <input type="number" name="stock_quantity" min="0" value="0">
+    </label>
+    <label>
+      Default copies
+      <input type="number" name="default_copies" min="1" value="1">
+    </label>
+    <label>
+      Bin / location (optional)
+      <input type="text" name="bin_location" placeholder="Aisle 4 Bin 12">
+    </label>
+    <label>
+      Image URL (optional)
+      <input type="url" name="image_url" placeholder="https://example.com/part.jpg">
+    </label>
+    <label class="full">
+      Description (optional)
+      <textarea name="description" rows="3" placeholder="Add any helpful identifying details."></textarea>
+    </label>
+    <label class="full">
+      Notes (small print)
+      <input type="text" name="notes" placeholder="Short note to display in the corner">
+    </label>
+    <label class="full">
+      Template
+      <select name="template_id" required>
+        {% for template in templates %}
+          <option value="{{ template.id }}">{{ template.name }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <button type="submit" class="primary">Save label</button>
+  </form>
+</section>
+
+<section class="panel">
+  <div class="panel-header">
+    <h2>Label library</h2>
+    <div>
+      <button type="submit" class="primary" form="print-form">Download selected as PDF</button>
+    </div>
+  </div>
+  <p class="panel-intro">Select the labels you want to print, adjust the quantity per part, then export a 10-up letter PDF.</p>
+  <form id="print-form" method="post" action="{{ url_for('print_labels') }}"></form>
+  {% if labels %}
+    <div class="label-list">
+      {% for label in labels %}
+        <article class="label-item">
+          <div class="label-select">
+            <input type="checkbox" name="label_ids" value="{{ label.id }}" form="print-form" id="label-select-{{ label.id }}">
+            <label for="label-select-{{ label.id }}" class="sr-only">Select {{ label.manufacturer }} {{ label.part_number }}</label>
+            <label class="copies">Copies
+              <input type="number" min="1" name="copies_{{ label.id }}" value="{{ label.default_copies }}" form="print-form">
+            </label>
+          </div>
+          <div class="label-summary">
+            <h3>{{ label.manufacturer }} · {{ label.part_number }}</h3>
+            <ul>
+              <li>Template: <strong>{{ label.template_name }}</strong></li>
+              <li>On hand: <strong>{{ label.stock_quantity }}</strong></li>
+              {% if label.bin_location %}<li>Location: {{ label.bin_location }}</li>{% endif %}
+              {% if label.image_url %}<li>Image: <a href="{{ label.image_url }}" target="_blank" rel="noopener">Open</a></li>{% endif %}
+            </ul>
+            {% if label.description %}
+              <p class="description">{{ label.description }}</p>
+            {% endif %}
+            {% if label.notes %}
+              <p class="notes">Notes: {{ label.notes }}</p>
+            {% endif %}
+          </div>
+          <details class="label-actions">
+            <summary>Edit details</summary>
+            <form method="post" action="{{ url_for('update_label', label_id=label.id) }}" class="grid-form">
+              <label>
+                Manufacturer
+                <input type="text" name="manufacturer" value="{{ label.manufacturer }}" required>
+              </label>
+              <label>
+                Part number
+                <input type="text" name="part_number" value="{{ label.part_number }}" required>
+              </label>
+              <label>
+                Stock quantity
+                <input type="number" name="stock_quantity" value="{{ label.stock_quantity }}" min="0">
+              </label>
+              <label>
+                Default copies
+                <input type="number" name="default_copies" value="{{ label.default_copies }}" min="1">
+              </label>
+              <label>
+                Bin / location
+                <input type="text" name="bin_location" value="{{ label.bin_location or '' }}">
+              </label>
+              <label>
+                Image URL
+                <input type="url" name="image_url" value="{{ label.image_url or '' }}">
+              </label>
+              <label class="full">
+                Description
+                <textarea name="description" rows="3">{{ label.description or '' }}</textarea>
+              </label>
+              <label class="full">
+                Notes
+                <input type="text" name="notes" value="{{ label.notes or '' }}">
+              </label>
+              <label class="full">
+                Template
+                <select name="template_id">
+                  {% for template in templates %}
+                    <option value="{{ template.id }}" {% if template.id == label.template_id %}selected{% endif %}>{{ template.name }}</option>
+                  {% endfor %}
+                </select>
+              </label>
+              <div class="form-actions">
+                <button type="submit">Save changes</button>
+                <button type="submit" formaction="{{ url_for('delete_label', label_id=label.id) }}" formmethod="post" class="danger" onclick="return confirm('Delete this label?');">Delete</button>
+              </div>
+            </form>
+          </details>
+        </article>
+      {% endfor %}
+    </div>
+  {% else %}
+    <p>No labels yet. Add a few using the form above.</p>
+  {% endif %}
+</section>
+{% endblock %}
