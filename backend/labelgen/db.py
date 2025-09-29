@@ -119,7 +119,7 @@ def fetch_template(template_id: int) -> sqlite3.Row | None:
     ).fetchone()
 
 
-def upsert_template(data: Mapping[str, object]) -> None:
+def upsert_template(data: Mapping[str, object]) -> int:
     database = get_db()
     if data.get("id"):
         database.execute(
@@ -135,15 +135,18 @@ def upsert_template(data: Mapping[str, object]) -> None:
             """,
             data,
         )
+        template_id = int(data["id"])
     else:
-        database.execute(
+        cursor = database.execute(
             """
             INSERT INTO template (name, description, image_position, accent_color, text_align, include_description)
             VALUES (:name, :description, :image_position, :accent_color, :text_align, :include_description)
             """,
             data,
         )
+        template_id = int(cursor.lastrowid)
     database.commit()
+    return template_id
 
 
 def delete_template(template_id: int) -> None:
@@ -173,9 +176,9 @@ def fetch_label(label_id: int) -> sqlite3.Row | None:
     ).fetchone()
 
 
-def create_label(data: Mapping[str, object]) -> None:
+def create_label(data: Mapping[str, object]) -> int:
     database = get_db()
-    database.execute(
+    cursor = database.execute(
         """
         INSERT INTO label (
             template_id,
@@ -202,6 +205,7 @@ def create_label(data: Mapping[str, object]) -> None:
         data,
     )
     database.commit()
+    return int(cursor.lastrowid)
 
 
 def update_label(label_id: int, data: Mapping[str, object]) -> None:
@@ -212,6 +216,20 @@ def update_label(label_id: int, data: Mapping[str, object]) -> None:
     payload["id"] = label_id
     database.execute(query, payload)
     database.commit()
+
+
+def fetch_label_with_template(label_id: int) -> sqlite3.Row | None:
+    database = get_db()
+    return database.execute(
+        """
+        SELECT label.*, template.name AS template_name, template.image_position, template.accent_color,
+               template.text_align, template.include_description
+          FROM label
+          JOIN template ON template.id = label.template_id
+         WHERE label.id = ?
+        """,
+        (label_id,),
+    ).fetchone()
 
 
 def delete_label(label_id: int) -> None:
