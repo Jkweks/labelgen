@@ -75,6 +75,21 @@ const FIELD_MAP = FIELD_LIBRARY.reduce((map, field) => {
   return map;
 }, {});
 
+const FIELD_FORMAT_DEFAULTS = {
+  manufacturer: '{value}',
+  part_number: '{value_upper}',
+  description: '{value}',
+  stock_quantity: 'On Hand: {value}',
+  bin_location: 'Bin: {value}',
+  notes: '{value}',
+  manufacturer_right: '{value}',
+  part_number_right: '{value_upper}',
+  description_right: '{value}',
+  stock_quantity_right: 'On Hand: {value}',
+  bin_location_right: 'Bin: {value}',
+  notes_right: '{value}',
+};
+
 const DESCRIPTION_KEYS = new Set(['description', 'description_right']);
 
 const DEFAULT_SINGLE_BLOCKS = [
@@ -165,6 +180,47 @@ function normalizeLayoutConfig(raw, partsPerLabel = 1, includeDescription = true
   return { version: 1, blocks: normalized };
 }
 
+function normalizeFieldFormats(raw) {
+  let parsed = raw;
+  if (typeof raw === 'string') {
+    try {
+      parsed = JSON.parse(raw);
+    } catch (error) {
+      parsed = null;
+    }
+  }
+
+  const normalized = { ...FIELD_FORMAT_DEFAULTS };
+  if (parsed && typeof parsed === 'object') {
+    for (const [key, value] of Object.entries(parsed)) {
+      if (!FIELD_MAP[key] || typeof value !== 'string') {
+        continue;
+      }
+      normalized[key] = value;
+    }
+  }
+
+  return normalized;
+}
+
+function prepareFieldFormatPayload(formats, partsPerLabel = 1, includeDescription = true) {
+  const normalized = normalizeFieldFormats(formats);
+  const payload = {};
+  for (const key of Object.keys(FIELD_MAP)) {
+    const field = FIELD_MAP[key];
+    if (field.requiresDual && partsPerLabel !== 2) {
+      continue;
+    }
+    if (field.descriptionDependent && !includeDescription) {
+      continue;
+    }
+    const value = normalized[key];
+    const text = typeof value === 'string' ? value.trim() : '';
+    payload[key] = text || FIELD_FORMAT_DEFAULTS[key] || '{value}';
+  }
+  return payload;
+}
+
 function createEmptyTemplateForm() {
   return {
     name: '',
@@ -175,6 +231,7 @@ function createEmptyTemplateForm() {
     include_description: true,
     parts_per_label: 1,
     layout_config: createDefaultLayoutConfig(1, true),
+    field_formats: normalizeFieldFormats(null),
   };
 }
 
@@ -393,6 +450,18 @@ function App() {
   const leftImageInputRef = useRef(null);
   const rightImageInputRef = useRef(null);
 
+  const formatFields = useMemo(() => {
+    return FIELD_LIBRARY.filter((field) => {
+      if (field.requiresDual && templateForm.parts_per_label !== 2) {
+        return false;
+      }
+      if (field.descriptionDependent && !templateForm.include_description) {
+        return false;
+      }
+      return true;
+    });
+  }, [templateForm.parts_per_label, templateForm.include_description]);
+
   const selectedLabels = useMemo(
     () =>
       Object.entries(printSelection)
@@ -465,6 +534,7 @@ function App() {
           template.parts_per_label,
           template.include_description,
         ),
+        field_formats: normalizeFieldFormats(template.field_formats),
       })),
     );
   }
@@ -486,6 +556,7 @@ function App() {
                 label.template.parts_per_label,
                 label.template.include_description,
               ),
+              field_formats: normalizeFieldFormats(label.template.field_formats),
             }
           : label.template,
       })),
@@ -561,6 +632,26 @@ function App() {
     });
   }
 
+  function handleFieldFormatChange(fieldKey, value) {
+    setTemplateForm((form) => ({
+      ...form,
+      field_formats: {
+        ...form.field_formats,
+        [fieldKey]: value,
+      },
+    }));
+  }
+
+  function resetFieldFormat(fieldKey) {
+    setTemplateForm((form) => ({
+      ...form,
+      field_formats: {
+        ...form.field_formats,
+        [fieldKey]: FIELD_FORMAT_DEFAULTS[fieldKey] || '{value}',
+      },
+    }));
+  }
+
   function handleLabelChange(event) {
     const { name, value } = event.target;
     setLabelForm((form) => ({
@@ -606,6 +697,11 @@ function App() {
       ...templateForm,
       layout_config: normalizeLayoutConfig(
         templateForm.layout_config,
+        templateForm.parts_per_label,
+        templateForm.include_description,
+      ),
+      field_formats: prepareFieldFormatPayload(
+        templateForm.field_formats,
         templateForm.parts_per_label,
         templateForm.include_description,
       ),
@@ -713,6 +809,7 @@ function App() {
         template.parts_per_label || 1,
         Boolean(template.include_description),
       ),
+      field_formats: normalizeFieldFormats(template.field_formats),
     });
   }
 
@@ -933,6 +1030,40 @@ function App() {
               textAlign={templateForm.text_align}
               imagePosition={templateForm.image_position}
             />
+          </div>
+          <div className="field-format-section">
+            <div className="form-divider">Field formatting</div>
+            <p className="form-subtext">
+              Control how each field is rendered when printing. Use placeholders like{' '}
+              <code>{'{value}'}</code>, <code>{'{value_upper}'}</code>, <code>{'{value_lower}'}</code>, or{' '}
+              <code>{'{value_number}'}</code>.
+            </p>
+            <div className="field-format-grid">
+              {formatFields.map((field) => {
+                const currentValue =
+                  (templateForm.field_formats && templateForm.field_formats[field.key]) ||
+                  FIELD_FORMAT_DEFAULTS[field.key] ||
+                  '{value}';
+                return (
+                  <div className="field-format-item" key={field.key}>
+                    <label>
+                      {field.label}
+                      <input
+                        value={currentValue}
+                        onChange={(event) => handleFieldFormatChange(field.key, event.target.value)}
+                      />
+                    </label>
+                    <button
+                      type="button"
+                      className="link-button field-format-reset"
+                      onClick={() => resetFieldFormat(field.key)}
+                    >
+                      Reset to default
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
           </div>
           <button type="submit" className="primary">
             {editingTemplateId ? 'Update template' : 'Create template'}

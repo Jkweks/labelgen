@@ -47,6 +47,21 @@ FIELD_LIBRARY: dict[str, dict[str, Any]] = {
     },
 }
 
+FIELD_FORMAT_DEFAULTS: dict[str, str] = {
+    "manufacturer": "{value}",
+    "part_number": "{value_upper}",
+    "description": "{value}",
+    "stock_quantity": "On Hand: {value}",
+    "bin_location": "Bin: {value}",
+    "notes": "{value}",
+    "manufacturer_right": "{value}",
+    "part_number_right": "{value_upper}",
+    "description_right": "{value}",
+    "stock_quantity_right": "On Hand: {value}",
+    "bin_location_right": "Bin: {value}",
+    "notes_right": "{value}",
+}
+
 _DEFAULT_SINGLE_BLOCKS = [
     {"key": "manufacturer", "width": "half"},
     {"key": "part_number", "width": "half"},
@@ -138,3 +153,40 @@ def dumps_layout_config(config: dict[str, Any]) -> str:
     """Serialize a layout configuration to JSON."""
 
     return json.dumps(config, separators=(",", ":"))
+
+
+def normalize_field_formats(value: Any) -> dict[str, str]:
+    """Validate a field format payload and merge with defaults."""
+
+    parsed: Any
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+        except json.JSONDecodeError:
+            parsed = None
+    elif isinstance(value, dict):
+        parsed = value
+    else:
+        parsed = None
+
+    formats = dict(FIELD_FORMAT_DEFAULTS)
+    if isinstance(parsed, dict):
+        for key, text in parsed.items():
+            if key not in FIELD_LIBRARY:
+                continue
+            if not isinstance(text, str):
+                continue
+            formats[key] = text
+
+    return formats
+
+
+def dumps_field_formats(formats: dict[str, str]) -> str:
+    """Serialize field format mappings to JSON."""
+
+    payload = {
+        key: value
+        for key, value in formats.items()
+        if key in FIELD_LIBRARY and isinstance(value, str)
+    }
+    return json.dumps(payload, separators=(",", ":"))

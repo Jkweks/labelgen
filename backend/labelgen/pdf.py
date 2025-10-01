@@ -5,7 +5,7 @@ from __future__ import annotations
 import io
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable, Optional
+from typing import Any, Iterable, Optional
 from urllib.parse import urlparse
 
 import requests
@@ -17,6 +17,8 @@ from reportlab.lib.utils import ImageReader
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfgen import canvas
 
+from . import layouts
+
 
 @dataclass(slots=True)
 class TemplateConfig:
@@ -26,6 +28,8 @@ class TemplateConfig:
     text_align: str
     include_description: bool
     parts_per_label: int
+    layout_config: dict[str, Any]
+    field_formats: dict[str, str]
 
 
 @dataclass(slots=True)
@@ -44,6 +48,70 @@ class LabelData:
     left: PartDetails
     right: PartDetails | None
     template: TemplateConfig
+
+
+@dataclass(slots=True)
+class FieldStyle:
+    show_label: bool = True
+    label_font: str = "Helvetica-Bold"
+    label_size: int = 6
+    value_font: str = "Helvetica"
+    value_size: int = 9
+    value_size_split: int | None = None
+    use_accent: bool = False
+
+    def resolved_value_size(self, is_split: bool) -> int:
+        if is_split and self.value_size_split:
+            return self.value_size_split
+        return self.value_size
+
+
+@dataclass(slots=True)
+class BlockLayout:
+    key: str
+    label: str | None
+    lines: list[str]
+    style: FieldStyle
+    value_font: str
+    value_size: int
+    height: float
+    width: float
+
+
+@dataclass(slots=True)
+class RowLayout:
+    blocks: list[BlockLayout]
+    height: float
+
+
+_DEFAULT_FIELD_STYLE = FieldStyle()
+_FIELD_STYLE_OVERRIDES: dict[str, FieldStyle] = {
+    "manufacturer": FieldStyle(show_label=False, value_font="Helvetica", value_size=9, value_size_split=8),
+    "part_number": FieldStyle(
+        show_label=False,
+        value_font="Helvetica-Bold",
+        value_size=14,
+        value_size_split=12,
+        use_accent=True,
+    ),
+    "stock_quantity": FieldStyle(
+        show_label=False,
+        value_font="Helvetica-Bold",
+        value_size=11,
+        value_size_split=10,
+    ),
+    "notes": FieldStyle(
+        show_label=False,
+        value_font="Helvetica-Oblique",
+        value_size=8,
+        value_size_split=7,
+    ),
+}
+
+_LABEL_TEXT_COLOR = colors.Color(0.4, 0.46, 0.58)
+_COLUMN_GAP = 0.08 * inch
+_ROW_GAP_FULL = 0.1 * inch
+_ROW_GAP_SPLIT = 0.07 * inch
 
 
 class ImageCache:
@@ -145,10 +213,297 @@ def _wrap_text(value: str, font_name: str, font_size: int, max_width: float) -> 
     return lines
 
 
+class _SafeFormatDict(dict[str, Any]):
+    def __missing__(self, key: str) -> str:
+        return ""
+
+
+def _field_style_for_key(key: str) -> FieldStyle:
+    base = key[:-6] if key.endswith("_right") else key
+    return _FIELD_STYLE_OVERRIDES.get(base, _DEFAULT_FIELD_STYLE)
+
+
+def _extract_part_value(part: PartDetails, key: str) -> Any:
+    base = key[:-6] if key.endswith("_right") else key
+    return getattr(part, base, None)
+
+
+def _format_field_value(template: TemplateConfig, key: str, value: Any) -> str:
+    formats = template.field_formats or {}
+    format_string = formats.get(key)
+    if format_string is None and key.endswith("_right"):
+        format_string = formats.get(key[:-6])
+    if format_string is None:
+        format_string = layouts.FIELD_FORMAT_DEFAULTS.get(key)
+    if not format_string:
+        format_string = "{value}"
+
+    if isinstance(value, bool):
+        value_text = "True" if value else "False"
+    elif isinstance(value, int):
+        value_text = str(value)
+    elif isinstance(value, float):
+        value_text = str(int(value)) if value.is_integer() else str(value)
+    elif value is None:
+        value_text = ""
+    else:
+        value_text = str(value).strip()
+
+    replacements = {
+        "value": value_text,
+        "value_upper": value_text.upper(),
+        "value_lower": value_text.lower(),
+        "value_title": value_text.title(),
+        "value_number": value
+        if isinstance(value, (int, float)) and not isinstance(value, bool)
+        else "",
+        "value_raw": value,
+    }
+    try:
+        formatted = format_string.format_map(_SafeFormatDict(replacements))
+    except Exception:
+        formatted = value_text
+    return formatted.strip()
+
+
+def _prepare_block_layout(
+    block: dict[str, Any],
+    part: PartDetails,
+    template: TemplateConfig,
+    width: float,
+    is_split: bool,
+) -> BlockLayout:
+    key = block.get("key")
+    if not isinstance(key, str):
+        key = ""
+    field_meta = layouts.FIELD_LIBRARY.get(key, {})
+    label = field_meta.get("label", key.replace("_", " ").title())
+    style = _field_style_for_key(key)
+    value_font = style.value_font
+    value_size = style.resolved_value_size(is_split)
+    formatted = _format_field_value(template, key, _extract_part_value(part, key))
+    max_width = max(width - 2, 1)
+    lines = _wrap_text(formatted, value_font, value_size, max_width) if formatted else []
+    if not lines and formatted:
+        lines = [formatted]
+
+    show_label = style.show_label and bool(label)
+    label_text = label if show_label else None
+
+    height = 0.0
+    if label_text:
+        height += style.label_size
+    if label_text and lines:
+        height += 2
+    if lines:
+        height += len(lines) * value_size
+        if len(lines) > 1:
+            height += (len(lines) - 1) * 2
+    else:
+        height += value_size * 0.6
+    height += 4
+
+    return BlockLayout(
+        key=key,
+        label=label_text,
+        lines=lines,
+        style=style,
+        value_font=value_font,
+        value_size=value_size,
+        height=height,
+        width=width,
+    )
+
+
+def _group_blocks_by_row(blocks: list[dict[str, Any]]) -> list[list[dict[str, Any]]]:
+    rows: list[list[dict[str, Any]]] = []
+    current: list[dict[str, Any]] = []
+    for block in blocks:
+        width = block.get("width")
+        normalized_width = "half" if width == "half" else "full"
+        candidate = {"key": block.get("key"), "width": normalized_width}
+        if normalized_width == "full":
+            if current:
+                rows.append(current)
+                current = []
+            rows.append([candidate])
+        else:
+            current.append(candidate)
+            if len(current) == 2:
+                rows.append(current)
+                current = []
+    if current:
+        rows.append(current)
+    return rows
+
+
+def _build_row_layouts(
+    blocks: list[dict[str, Any]],
+    part: PartDetails,
+    template: TemplateConfig,
+    available_width: float,
+    is_split: bool,
+) -> list[RowLayout]:
+    if available_width <= 0:
+        return []
+
+    row_layouts: list[RowLayout] = []
+    for row in _group_blocks_by_row(blocks):
+        if not row:
+            continue
+        widths: list[float]
+        if len(row) == 1:
+            block_width = available_width
+            if row[0].get("width") == "half":
+                block_width = max((available_width - _COLUMN_GAP) / 2, available_width * 0.48)
+            widths = [block_width]
+        else:
+            column_count = len(row)
+            inner_width = max(available_width - _COLUMN_GAP * (column_count - 1), 1)
+            widths = [inner_width / column_count for _ in row]
+
+        row_blocks: list[BlockLayout] = []
+        max_height = 0.0
+        for block, width in zip(row, widths):
+            layout_block = _prepare_block_layout(block, part, template, max(width, 1), is_split)
+            row_blocks.append(layout_block)
+            max_height = max(max_height, layout_block.height)
+        if not row_blocks:
+            continue
+        row_layouts.append(RowLayout(blocks=row_blocks, height=max_height))
+
+    return row_layouts
+
+
+def _filter_blocks_for_side(
+    template: TemplateConfig,
+    side: str,
+) -> list[dict[str, Any]]:
+    layout = template.layout_config or {}
+    blocks = []
+    if isinstance(layout, dict):
+        candidate_blocks = layout.get("blocks")
+        if isinstance(candidate_blocks, list):
+            blocks = candidate_blocks
+
+    suffix = "_right"
+    result: list[dict[str, Any]] = []
+    for block in blocks:
+        key = block.get("key") if isinstance(block, dict) else None
+        if not isinstance(key, str):
+            continue
+        if side == "right" and not key.endswith(suffix):
+            continue
+        if side != "right" and key.endswith(suffix):
+            continue
+        width = block.get("width")
+        result.append({"key": key, "width": "half" if width == "half" else "full"})
+
+    if result:
+        return result
+
+    fallback = layouts.default_layout_config(template.parts_per_label, template.include_description)
+    if isinstance(fallback, dict):
+        candidate_blocks = fallback.get("blocks")
+        if isinstance(candidate_blocks, list):
+            return _filter_blocks_for_side(
+                TemplateConfig(
+                    name=template.name,
+                    image_position=template.image_position,
+                    accent_color=template.accent_color,
+                    text_align=template.text_align,
+                    include_description=template.include_description,
+                    parts_per_label=template.parts_per_label,
+                    layout_config=fallback,
+                    field_formats=template.field_formats,
+                ),
+                side,
+            )
+
+    return []
+
+
+def _draw_aligned(
+    canv: canvas.Canvas,
+    text: str,
+    font: str,
+    size: int,
+    align: str,
+    x: float,
+    width: float,
+    baseline: float,
+) -> None:
+    canv.setFont(font, size)
+    if align == "center":
+        canv.drawCentredString(x + width / 2, baseline, text)
+    elif align == "right":
+        canv.drawRightString(x + width, baseline, text)
+    else:
+        canv.drawString(x, baseline, text)
+
+
+def _draw_block(
+    canv: canvas.Canvas,
+    block: BlockLayout,
+    x: float,
+    top: float,
+    width: float,
+    align: str,
+    accent: colors.Color,
+) -> None:
+    cursor = top
+    if block.label:
+        canv.setFillColor(_LABEL_TEXT_COLOR)
+        baseline = cursor - block.style.label_size
+        _draw_aligned(
+            canv,
+            block.label,
+            block.style.label_font,
+            block.style.label_size,
+            align,
+            x,
+            width,
+            baseline,
+        )
+        cursor = baseline - 2
+
+    text_color = accent if block.style.use_accent else colors.black
+    canv.setFillColor(text_color)
+    if block.lines:
+        baseline = cursor
+        for index, line in enumerate(block.lines):
+            baseline -= block.value_size
+            _draw_aligned(
+                canv,
+                line,
+                block.value_font,
+                block.value_size,
+                align,
+                x,
+                width,
+                baseline,
+            )
+            if index < len(block.lines) - 1:
+                baseline -= 2
+        cursor = baseline
+    else:
+        baseline = cursor - block.value_size
+        _draw_aligned(
+            canv,
+            "",
+            block.value_font,
+            block.value_size,
+            align,
+            x,
+            width,
+            baseline,
+        )
+
 def _render_part(
     canv: canvas.Canvas,
     part: PartDetails,
     template: TemplateConfig,
+    blocks: list[dict[str, Any]],
     x: float,
     y: float,
     width: float,
@@ -156,7 +511,6 @@ def _render_part(
     image_cache: ImageCache,
     accent: colors.Color,
     is_split: bool,
-    use_placeholder: bool,
 ) -> None:
     part_padding = 0.12 * inch if is_split else 0.16 * inch
     inner_x = x + part_padding
@@ -167,19 +521,15 @@ def _render_part(
     text_area_x = inner_x
     text_area_width = inner_width
     text_area_y_top = inner_y + inner_height
-    manufacturer_text = (part.manufacturer or "").strip() or "Unknown Manufacturer"
-    manufacturer_font = "Helvetica"
-    manufacturer_size = 7 if is_split else 8
 
     effective_position = template.image_position.lower() if template.image_position else "left"
-    if effective_position not in {"left", "top"}:
+    if effective_position not in {"left", "right", "top"}:
         effective_position = "none"
     if is_split and effective_position == "left":
         effective_position = "top"
 
     image = None
-    image_box: tuple[float, float, float, float] | None = None
-    if part.image_url and effective_position in {"left", "top"}:
+    if part.image_url and effective_position in {"left", "right", "top"}:
         image = image_cache.get(part.image_url)
 
     if image is not None and effective_position == "left" and inner_width > 0 and inner_height > 0:
@@ -200,8 +550,27 @@ def _render_part(
             preserveAspectRatio=True,
             mask="auto",
         )
-        image_box = (inner_x, image_y, image_width, target_height)
         text_area_x = inner_x + image_width + part_padding / 2
+        text_area_width = max(inner_width - image_width - part_padding / 2, 0)
+    elif image is not None and effective_position == "right" and inner_width > 0 and inner_height > 0:
+        image_width = inner_width * 0.35
+        image_height = inner_height
+        aspect = image.width / image.height if image.height else 1
+        target_height = image_width / aspect
+        if target_height > image_height:
+            target_height = image_height
+            image_width = target_height * aspect
+        image_x = inner_x + inner_width - image_width
+        image_y = inner_y + (inner_height - target_height) / 2
+        canv.drawImage(
+            ImageReader(image),
+            image_x,
+            image_y,
+            width=image_width,
+            height=target_height,
+            preserveAspectRatio=True,
+            mask="auto",
+        )
         text_area_width = max(inner_width - image_width - part_padding / 2, 0)
     elif image is not None and effective_position == "top" and inner_width > 0 and inner_height > 0:
         image_height = inner_height * (0.45 if is_split else 0.55)
@@ -222,100 +591,37 @@ def _render_part(
             preserveAspectRatio=True,
             mask="auto",
         )
-        image_box = (image_x, image_y, target_width, image_height)
-        text_area_y_top = inner_y + inner_height - image_height - part_padding / 2
-    elif use_placeholder and inner_width > 0 and inner_height > 0:
-        placeholder_height = min(0.65 * inch, inner_height * 0.45)
-        canv.setFillColor(colors.Color(0.92, 0.92, 0.92))
-        canv.rect(
-            inner_x,
-            inner_y + inner_height - placeholder_height,
-            inner_width,
-            placeholder_height,
-            fill=1,
-            stroke=0,
-        )
-        canv.setFillColor(colors.black)
+        text_area_y_top = image_y - part_padding / 2
 
-    centered_text_area = template.text_align == "center" and text_area_width > 0
+    align = (template.text_align or "left").lower()
+    if align not in {"left", "center", "right"}:
+        align = "left"
 
-    if image_box is not None:
-        manufacturer_baseline = image_box[1] - manufacturer_size - 2
-        minimum_baseline = inner_y + manufacturer_size
-        manufacturer_baseline = max(manufacturer_baseline, minimum_baseline)
-        canv.setFont(manufacturer_font, manufacturer_size)
-        canv.setFillColor(colors.black)
-        if effective_position == "left":
-            canv.drawCentredString(image_box[0] + image_box[2] / 2, manufacturer_baseline, manufacturer_text)
-        else:
-            center_x = text_area_x + text_area_width / 2
-            canv.drawCentredString(center_x, manufacturer_baseline, manufacturer_text)
-            text_area_y_top = min(text_area_y_top, manufacturer_baseline - (6 if is_split else 8))
-            minimum_text_top = inner_y + manufacturer_size + (6 if is_split else 8)
-            text_area_y_top = max(text_area_y_top, minimum_text_top)
-    else:
-        canv.setFont(manufacturer_font, manufacturer_size)
-        canv.setFillColor(colors.black)
-        if centered_text_area:
-            canv.drawCentredString(text_area_x + text_area_width / 2, text_area_y_top - manufacturer_size, manufacturer_text)
-        else:
-            canv.drawString(text_area_x, text_area_y_top - manufacturer_size, manufacturer_text)
-        text_area_y_top -= manufacturer_size + (6 if is_split else 8)
+    row_layouts = _build_row_layouts(blocks, part, template, text_area_width, is_split)
+    if not row_layouts:
+        return
 
-    align_center = centered_text_area
-    heading_size = 12 if is_split else 14
-    body_size = 9 if is_split else 10
-    description_size = 8 if is_split else 9
-    qty_size = 10 if is_split else 11
-    note_size = 7 if is_split else 8
-
-    text_y = text_area_y_top - (6 if is_split else 4)
-    canv.setFillColor(accent)
-    canv.setFont("Helvetica-Bold", heading_size)
-    part_number = (part.part_number or "").strip() or "—"
-    part_heading = part_number.upper()
-    if align_center:
-        canv.drawCentredString(text_area_x + text_area_width / 2, text_y, part_heading)
-    else:
-        canv.drawString(text_area_x, text_y, part_heading)
-    text_y -= heading_size + (5 if is_split else 7)
-
-    canv.setFillColor(colors.black)
-
-    if template.include_description and part.description:
-        canv.setFont("Helvetica", description_size)
-        max_width = text_area_width if not align_center else text_area_width * 0.9
-        max_width = max(max_width, 1)
-        for line in _wrap_text(part.description.strip(), "Helvetica", description_size, max_width):
-            if align_center:
-                canv.drawCentredString(text_area_x + text_area_width / 2, text_y, line)
-            else:
-                canv.drawString(text_area_x, text_y, line)
-            text_y -= description_size + (4 if is_split else 4)
-
-    cleaned_bin = None
-    if part.bin_location is not None:
-        bin_text = str(part.bin_location).strip()
-        if bin_text and bin_text != "0":
-            cleaned_bin = bin_text
-
-    if cleaned_bin:
-        canv.setFont("Helvetica", body_size)
-        location_line = f"Bin: {cleaned_bin}"
-        if align_center:
-            canv.drawCentredString(text_area_x + text_area_width / 2, text_y, location_line)
-        else:
-            canv.drawString(text_area_x, text_y, location_line)
-        text_y -= body_size + (5 if is_split else 6)
-
-    if part.stock_quantity is not None and part.stock_quantity != 0:
-        canv.setFont("Helvetica-Bold", qty_size)
-        qty_line = f"On Hand: {part.stock_quantity}"
-        canv.drawString(text_area_x, y + part_padding, qty_line)
-
-    if part.notes:
-        canv.setFont("Helvetica-Oblique", note_size)
-        canv.drawRightString(x + width - part_padding, y + part_padding, part.notes.strip())
+    row_gap = _ROW_GAP_SPLIT if is_split else _ROW_GAP_FULL
+    cursor = text_area_y_top
+    for index, row in enumerate(row_layouts):
+        cursor -= row.height
+        row_top = cursor + row.height
+        row_x = text_area_x
+        for block_index, block_layout in enumerate(row.blocks):
+            _draw_block(
+                canv,
+                block_layout,
+                row_x,
+                row_top,
+                block_layout.width,
+                align,
+                accent,
+            )
+            row_x += block_layout.width
+            if block_index < len(row.blocks) - 1:
+                row_x += _COLUMN_GAP
+        if index < len(row_layouts) - 1:
+            cursor -= row_gap
 
 
 def draw_label(
@@ -337,6 +643,9 @@ def draw_label(
     accent = _hex_to_color(template.accent_color)
     is_split = template.parts_per_label == 2 and label.right is not None
 
+    left_blocks = _filter_blocks_for_side(template, "left")
+    right_blocks = _filter_blocks_for_side(template, "right") if is_split else []
+
     if is_split:
         column_gap = padding / 2
         column_width = (inner_width - column_gap) / 2 if inner_width > 0 else 0
@@ -344,6 +653,7 @@ def draw_label(
             canv,
             label.left,
             template,
+            left_blocks,
             inner_x,
             inner_y,
             column_width,
@@ -351,7 +661,6 @@ def draw_label(
             image_cache,
             accent,
             is_split=True,
-            use_placeholder=False,
         )
         if label.right:
             right_x = inner_x + column_width + column_gap
@@ -359,6 +668,7 @@ def draw_label(
                 canv,
                 label.right,
                 template,
+                right_blocks,
                 right_x,
                 inner_y,
                 column_width,
@@ -366,7 +676,6 @@ def draw_label(
                 image_cache,
                 accent,
                 is_split=True,
-                use_placeholder=False,
             )
         divider_x = inner_x + column_width + column_gap / 2
         canv.setStrokeColor(colors.Color(0.82, 0.82, 0.82))
@@ -377,6 +686,7 @@ def draw_label(
             canv,
             label.left,
             template,
+            left_blocks,
             inner_x,
             inner_y,
             inner_width,
@@ -384,7 +694,6 @@ def draw_label(
             image_cache,
             accent,
             is_split=False,
-            use_placeholder=False,
         )
 
 
