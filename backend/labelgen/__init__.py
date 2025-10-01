@@ -4,12 +4,15 @@ from __future__ import annotations
 
 import io
 import os
+import uuid
 from datetime import datetime
 from typing import Any
+from urllib.parse import urlparse
 
-from flask import Flask, jsonify, request, send_file
+from flask import Flask, jsonify, request, send_file, send_from_directory
 from flask_cors import CORS
 from werkzeug.exceptions import BadRequest, HTTPException, NotFound
+from werkzeug.utils import secure_filename
 
 from . import db, pdf
 
@@ -27,6 +30,8 @@ def create_app(test_config: dict[str, Any] | None = None) -> Flask:
         app.config.update(test_config)
 
     os.makedirs(app.instance_path, exist_ok=True)
+    app.config.setdefault("UPLOAD_FOLDER", os.path.join(app.instance_path, "uploads"))
+    os.makedirs(app.config["UPLOAD_FOLDER"], exist_ok=True)
 
     db.init_app(app)
     CORS(app, resources={r"/api/*": {"origins": "*"}})
@@ -49,6 +54,32 @@ def create_app(test_config: dict[str, Any] | None = None) -> Flask:
             "parts_per_label": int(record["parts_per_label"] or 1),
         }
 
+    def _normalize_image_reference(value: str | None) -> str | None:
+        if not value:
+            return None
+        stripped = value.strip()
+        if not stripped:
+            return None
+        parsed = urlparse(stripped)
+        if parsed.scheme and parsed.netloc:
+            if parsed.path.startswith("/uploads/"):
+                return parsed.path.lstrip("/")
+            return stripped
+        if stripped.startswith("/uploads/"):
+            return stripped.lstrip("/")
+        if stripped.startswith("uploads/"):
+            return stripped
+        return stripped
+
+    def _public_image_url(value: str | None) -> str | None:
+        if not value:
+            return None
+        if value.startswith("uploads/"):
+            return f"{request.url_root.rstrip('/')}/{value}"
+        if value.startswith("/uploads/"):
+            return f"{request.url_root.rstrip('/')}{value}"
+        return value
+
     def serialize_label(record: Any) -> dict[str, Any]:
         return {
             "id": record["id"],
@@ -58,7 +89,7 @@ def create_app(test_config: dict[str, Any] | None = None) -> Flask:
             "description": record["description"],
             "stock_quantity": int(record["stock_quantity"] or 0),
             "bin_location": record["bin_location"],
-            "image_url": record["image_url"],
+            "image_url": _public_image_url(record["image_url"]),
             "notes": record["notes"],
             "default_copies": int(record["default_copies"] or 1),
             "manufacturer_right": record["manufacturer_right"],
@@ -66,7 +97,7 @@ def create_app(test_config: dict[str, Any] | None = None) -> Flask:
             "description_right": record["description_right"],
             "stock_quantity_right": int(record["stock_quantity_right"] or 0),
             "bin_location_right": record["bin_location_right"],
-            "image_url_right": record["image_url_right"],
+            "image_url_right": _public_image_url(record["image_url_right"]),
             "notes_right": record["notes_right"],
             "template": {
                 "name": record["template_name"],
@@ -96,6 +127,32 @@ def create_app(test_config: dict[str, Any] | None = None) -> Flask:
     @app.get("/healthz")
     def healthcheck() -> tuple[str, int]:
         return "ok", 200
+
+    @app.post("/api/uploads")
+    def upload_image():
+        if "file" not in request.files:
+            raise BadRequest("No file part in the request")
+
+        file = request.files["file"]
+        if file is None or file.filename == "":
+            raise BadRequest("No file provided")
+
+        if file.mimetype and not file.mimetype.startswith("image/"):
+            raise BadRequest("Only image uploads are supported")
+
+        original_name = secure_filename(file.filename)
+        _, ext = os.path.splitext(original_name)
+        unique_name = f"{uuid.uuid4().hex}{ext.lower()}"
+        destination = os.path.join(app.config["UPLOAD_FOLDER"], unique_name)
+        file.save(destination)
+
+        relative_path = f"uploads/{unique_name}"
+        public_url = f"{request.url_root.rstrip('/')}/{relative_path}"
+        return jsonify({"path": relative_path, "url": public_url}), 201
+
+    @app.get("/uploads/<path:filename>")
+    def serve_upload(filename: str):
+        return send_from_directory(app.config["UPLOAD_FOLDER"], filename)
 
     @app.get("/api/templates")
     def list_templates():
@@ -197,7 +254,7 @@ def create_app(test_config: dict[str, Any] | None = None) -> Flask:
             "description": (payload.get("description") or "").strip() or None,
             "stock_quantity": int(payload.get("stock_quantity") or 0),
             "bin_location": (payload.get("bin_location") or "").strip() or None,
-            "image_url": (payload.get("image_url") or "").strip() or None,
+            "image_url": _normalize_image_reference(payload.get("image_url")),
             "notes": (payload.get("notes") or "").strip() or None,
             "default_copies": max(1, int(payload.get("default_copies") or 1)),
             "manufacturer_right": None,
@@ -218,7 +275,7 @@ def create_app(test_config: dict[str, Any] | None = None) -> Flask:
             data["description_right"] = (payload.get("description_right") or "").strip() or None
             data["stock_quantity_right"] = int(payload.get("stock_quantity_right") or 0)
             data["bin_location_right"] = (payload.get("bin_location_right") or "").strip() or None
-            data["image_url_right"] = (payload.get("image_url_right") or "").strip() or None
+            data["image_url_right"] = _normalize_image_reference(payload.get("image_url_right"))
             data["notes_right"] = (payload.get("notes_right") or "").strip() or None
         label_id = db.create_label(data)
         label = db.fetch_label_with_template(label_id)
@@ -249,8 +306,12 @@ def create_app(test_config: dict[str, Any] | None = None) -> Flask:
             "notes_right",
         ):
             if key in payload:
-                value = (payload.get(key) or "").strip()
-                updates[key] = value or None
+                raw_value = payload.get(key)
+                if key in {"image_url", "image_url_right"}:
+                    updates[key] = _normalize_image_reference(raw_value)
+                else:
+                    value = (raw_value or "").strip()
+                    updates[key] = value or None
         for key in ("stock_quantity", "default_copies", "stock_quantity_right"):
             if key in payload:
                 raw_value = int(payload.get(key) or 0)

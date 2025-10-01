@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 
 function resolveApiBase() {
   const envBase = import.meta.env.VITE_API_BASE_URL?.trim();
@@ -59,6 +59,11 @@ function App() {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const [printSelection, setPrintSelection] = useState({});
+  const [imageFileLeft, setImageFileLeft] = useState(null);
+  const [imageFileRight, setImageFileRight] = useState(null);
+
+  const leftImageInputRef = useRef(null);
+  const rightImageInputRef = useRef(null);
 
   const selectedLabels = useMemo(
     () =>
@@ -95,6 +100,15 @@ function App() {
       return next;
     });
   }, [labels]);
+
+  useEffect(() => {
+    if (!requiresDualParts) {
+      setImageFileRight(null);
+      if (rightImageInputRef.current) {
+        rightImageInputRef.current.value = '';
+      }
+    }
+  }, [requiresDualParts]);
 
   async function loadAll() {
     setLoading(true);
@@ -135,6 +149,14 @@ function App() {
   function resetLabelForm() {
     setLabelForm(emptyLabelForm);
     setEditingLabelId(null);
+    setImageFileLeft(null);
+    setImageFileRight(null);
+    if (leftImageInputRef.current) {
+      leftImageInputRef.current.value = '';
+    }
+    if (rightImageInputRef.current) {
+      rightImageInputRef.current.value = '';
+    }
   }
 
   function handleTemplateChange(event) {
@@ -155,6 +177,28 @@ function App() {
           ? Number(value)
           : value,
     }));
+  }
+
+  function handleImageFileChange(side, file) {
+    if (side === 'left') {
+      setImageFileLeft(file ?? null);
+    } else {
+      setImageFileRight(file ?? null);
+    }
+  }
+
+  async function uploadImageFile(file) {
+    const formData = new FormData();
+    formData.append('file', file);
+    const response = await fetch(`${API_BASE}/api/uploads`, {
+      method: 'POST',
+      body: formData,
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(data.error || 'Unable to upload image');
+    }
+    return data;
   }
 
   async function submitTemplate(event) {
@@ -204,6 +248,21 @@ function App() {
       default_copies: Number(labelForm.default_copies) || 1,
       stock_quantity_right: Number(labelForm.stock_quantity_right) || 0,
     };
+
+    try {
+      if (imageFileLeft) {
+        const upload = await uploadImageFile(imageFileLeft);
+        payload.image_url = upload.path;
+      }
+      if (requiresDualParts && imageFileRight) {
+        const upload = await uploadImageFile(imageFileRight);
+        payload.image_url_right = upload.path;
+      }
+    } catch (err) {
+      console.error(err);
+      setError(err instanceof Error ? err.message : 'Unable to upload image');
+      return;
+    }
 
     if (!requiresDualParts) {
       payload.manufacturer_right = '';
@@ -286,6 +345,14 @@ function App() {
       image_url_right: label.image_url_right || '',
       notes_right: label.notes_right || '',
     });
+    setImageFileLeft(null);
+    setImageFileRight(null);
+    if (leftImageInputRef.current) {
+      leftImageInputRef.current.value = '';
+    }
+    if (rightImageInputRef.current) {
+      rightImageInputRef.current.value = '';
+    }
   }
 
   async function deleteLabel(labelId) {
@@ -548,6 +615,24 @@ function App() {
             <input name="image_url" value={labelForm.image_url} onChange={handleLabelChange} />
           </label>
           <label>
+            {`Upload image${leftSideSuffix}`}
+            <input
+              type="file"
+              accept="image/*"
+              ref={leftImageInputRef}
+              onChange={(event) =>
+                handleImageFileChange('left', event.target.files && event.target.files[0] ? event.target.files[0] : null)
+              }
+            />
+            <span className="form-subtext">
+              {imageFileLeft
+                ? `Selected file: ${imageFileLeft.name}`
+                : labelForm.image_url
+                  ? 'Existing image will be reused unless you pick a new file.'
+                  : 'You can upload an image instead of providing a URL.'}
+            </span>
+          </label>
+          <label>
             {`Description${leftSideSuffix}`}
             <input name="description" value={labelForm.description} onChange={handleLabelChange} />
           </label>
@@ -602,6 +687,24 @@ function App() {
                   value={labelForm.image_url_right}
                   onChange={handleLabelChange}
                 />
+              </label>
+              <label>
+                Upload image (right side)
+                <input
+                  type="file"
+                  accept="image/*"
+                  ref={rightImageInputRef}
+                  onChange={(event) =>
+                    handleImageFileChange('right', event.target.files && event.target.files[0] ? event.target.files[0] : null)
+                  }
+                />
+                <span className="form-subtext">
+                  {imageFileRight
+                    ? `Selected file: ${imageFileRight.name}`
+                    : labelForm.image_url_right
+                      ? 'Existing image will be reused unless you pick a new file.'
+                      : 'You can upload an image instead of providing a URL.'}
+                </span>
               </label>
               <label>
                 Description (right side)

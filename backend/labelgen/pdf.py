@@ -114,6 +114,9 @@ def _render_part(
     text_area_x = inner_x
     text_area_width = inner_width
     text_area_y_top = inner_y + inner_height
+    manufacturer_text = (part.manufacturer or "").strip() or "Unknown Manufacturer"
+    manufacturer_font = "Helvetica"
+    manufacturer_size = 7 if is_split else 8
 
     effective_position = template.image_position.lower() if template.image_position else "left"
     if effective_position not in {"left", "top"}:
@@ -122,6 +125,7 @@ def _render_part(
         effective_position = "top"
 
     image = None
+    image_box: tuple[float, float, float, float] | None = None
     if part.image_url and effective_position in {"left", "top"}:
         image = image_cache.get(part.image_url)
 
@@ -133,15 +137,17 @@ def _render_part(
         if target_height > image_height:
             target_height = image_height
             image_width = target_height * aspect
+        image_y = inner_y + (inner_height - target_height) / 2
         canv.drawImage(
             ImageReader(image),
             inner_x,
-            inner_y + (inner_height - target_height) / 2,
+            image_y,
             width=image_width,
             height=target_height,
             preserveAspectRatio=True,
             mask="auto",
         )
+        image_box = (inner_x, image_y, image_width, target_height)
         text_area_x = inner_x + image_width + part_padding / 2
         text_area_width = max(inner_width - image_width - part_padding / 2, 0)
     elif image is not None and effective_position == "top" and inner_width > 0 and inner_height > 0:
@@ -152,15 +158,18 @@ def _render_part(
         if target_width > image_width:
             target_width = image_width
             image_height = target_width / aspect
+        image_x = inner_x + (inner_width - target_width) / 2
+        image_y = inner_y + inner_height - image_height
         canv.drawImage(
             ImageReader(image),
-            inner_x + (inner_width - target_width) / 2,
-            inner_y + inner_height - image_height,
+            image_x,
+            image_y,
             width=target_width,
             height=image_height,
             preserveAspectRatio=True,
             mask="auto",
         )
+        image_box = (image_x, image_y, target_width, image_height)
         text_area_y_top = inner_y + inner_height - image_height - part_padding / 2
     elif use_placeholder and inner_width > 0 and inner_height > 0:
         placeholder_height = min(0.65 * inch, inner_height * 0.45)
@@ -175,42 +184,50 @@ def _render_part(
         )
         canv.setFillColor(colors.black)
 
-    align_center = template.text_align == "center" and text_area_width > 0
+    centered_text_area = template.text_align == "center" and text_area_width > 0
+
+    if image_box is not None:
+        manufacturer_baseline = image_box[1] - manufacturer_size - 2
+        minimum_baseline = inner_y + manufacturer_size
+        manufacturer_baseline = max(manufacturer_baseline, minimum_baseline)
+        canv.setFont(manufacturer_font, manufacturer_size)
+        canv.setFillColor(colors.black)
+        if effective_position == "left":
+            canv.drawCentredString(image_box[0] + image_box[2] / 2, manufacturer_baseline, manufacturer_text)
+        else:
+            center_x = text_area_x + text_area_width / 2
+            canv.drawCentredString(center_x, manufacturer_baseline, manufacturer_text)
+            text_area_y_top = min(text_area_y_top, manufacturer_baseline - (6 if is_split else 8))
+            minimum_text_top = inner_y + manufacturer_size + (6 if is_split else 8)
+            text_area_y_top = max(text_area_y_top, minimum_text_top)
+    else:
+        canv.setFont(manufacturer_font, manufacturer_size)
+        canv.setFillColor(colors.black)
+        if centered_text_area:
+            canv.drawCentredString(text_area_x + text_area_width / 2, text_area_y_top - manufacturer_size, manufacturer_text)
+        else:
+            canv.drawString(text_area_x, text_area_y_top - manufacturer_size, manufacturer_text)
+        text_area_y_top -= manufacturer_size + (6 if is_split else 8)
+
+    align_center = centered_text_area
     heading_size = 12 if is_split else 14
-    subheading_size = 10 if is_split else 12
     body_size = 9 if is_split else 10
     description_size = 8 if is_split else 9
     qty_size = 10 if is_split else 11
     note_size = 7 if is_split else 8
 
     text_y = text_area_y_top - (6 if is_split else 4)
-    manufacturer = (part.manufacturer or "Unknown Manufacturer").strip() or "Unknown Manufacturer"
     canv.setFillColor(accent)
     canv.setFont("Helvetica-Bold", heading_size)
+    part_number = (part.part_number or "").strip() or "—"
+    part_heading = part_number.upper()
     if align_center:
-        canv.drawCentredString(text_area_x + text_area_width / 2, text_y, manufacturer.upper())
+        canv.drawCentredString(text_area_x + text_area_width / 2, text_y, part_heading)
     else:
-        canv.drawString(text_area_x, text_y, manufacturer.upper())
-    text_y -= heading_size + (6 if is_split else 8)
+        canv.drawString(text_area_x, text_y, part_heading)
+    text_y -= heading_size + (5 if is_split else 7)
 
     canv.setFillColor(colors.black)
-    canv.setFont("Helvetica-Bold", subheading_size)
-    part_number = (part.part_number or "").strip() or "—"
-    part_line = f"Part #: {part_number}"
-    if align_center:
-        canv.drawCentredString(text_area_x + text_area_width / 2, text_y, part_line)
-    else:
-        canv.drawString(text_area_x, text_y, part_line)
-    text_y -= subheading_size + (5 if is_split else 6)
-
-    if part.bin_location:
-        canv.setFont("Helvetica", body_size)
-        location_line = f"Bin: {part.bin_location.strip()}"
-        if align_center:
-            canv.drawCentredString(text_area_x + text_area_width / 2, text_y, location_line)
-        else:
-            canv.drawString(text_area_x, text_y, location_line)
-        text_y -= body_size + (5 if is_split else 6)
 
     if template.include_description and part.description:
         canv.setFont("Helvetica", description_size)
@@ -223,9 +240,25 @@ def _render_part(
                 canv.drawString(text_area_x, text_y, line)
             text_y -= description_size + (4 if is_split else 4)
 
-    canv.setFont("Helvetica-Bold", qty_size)
-    qty_line = f"On Hand: {part.stock_quantity}"
-    canv.drawString(text_area_x, y + part_padding, qty_line)
+    cleaned_bin = None
+    if part.bin_location is not None:
+        bin_text = str(part.bin_location).strip()
+        if bin_text and bin_text != "0":
+            cleaned_bin = bin_text
+
+    if cleaned_bin:
+        canv.setFont("Helvetica", body_size)
+        location_line = f"Bin: {cleaned_bin}"
+        if align_center:
+            canv.drawCentredString(text_area_x + text_area_width / 2, text_y, location_line)
+        else:
+            canv.drawString(text_area_x, text_y, location_line)
+        text_y -= body_size + (5 if is_split else 6)
+
+    if part.stock_quantity is not None and part.stock_quantity != 0:
+        canv.setFont("Helvetica-Bold", qty_size)
+        qty_line = f"On Hand: {part.stock_quantity}"
+        canv.drawString(text_area_x, y + part_padding, qty_line)
 
     if part.notes:
         canv.setFont("Helvetica-Oblique", note_size)
