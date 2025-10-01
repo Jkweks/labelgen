@@ -406,6 +406,16 @@ def create_app(test_config: dict[str, Any] | None = None) -> Flask:
         if not isinstance(items, list) or not items:
             raise BadRequest("items must be a non-empty list")
 
+        layout_choice = payload.get("labels_per_page")
+        labels_per_page = 12
+        if layout_choice is not None:
+            try:
+                candidate = int(layout_choice)
+            except (TypeError, ValueError):
+                candidate = 12
+            if candidate in (10, 12):
+                labels_per_page = candidate
+
         available = {label["id"]: label for label in db.fetch_labels()}
         chosen: list[tuple[pdf.LabelData, int]] = []
         for item in items:
@@ -469,7 +479,11 @@ def create_app(test_config: dict[str, Any] | None = None) -> Flask:
             )
             chosen.append((label_data, max(1, copies_value)))
 
-        pdf_bytes = pdf.build_pdf(chosen, uploads_root=app.config.get("UPLOAD_FOLDER"))
+        pdf_bytes = pdf.build_pdf(
+            chosen,
+            uploads_root=app.config.get("UPLOAD_FOLDER"),
+            labels_per_page=labels_per_page,
+        )
         timestamp = datetime.utcnow().strftime("%Y%m%d-%H%M%S")
         return send_file(
             io.BytesIO(pdf_bytes),

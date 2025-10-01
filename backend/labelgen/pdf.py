@@ -697,9 +697,16 @@ def draw_label(
         )
 
 
+_PAGE_LAYOUTS: dict[int, tuple[int, int]] = {
+    10: (2, 5),
+    12: (2, 6),
+}
+
+
 def build_pdf(
     labels: Iterable[tuple[LabelData, int]],
     uploads_root: str | None = None,
+    labels_per_page: int = 12,
 ) -> bytes:
     """Generate a PDF containing the provided labels."""
 
@@ -707,8 +714,12 @@ def build_pdf(
     canv = canvas.Canvas(buffer, pagesize=letter)
     page_width, page_height = letter
     margin = 0.35 * inch
-    columns = 2
-    rows = 6
+
+    try:
+        columns, rows = _PAGE_LAYOUTS[int(labels_per_page)]
+    except (KeyError, TypeError, ValueError):
+        columns, rows = _PAGE_LAYOUTS[12]
+
     usable_width = page_width - 2 * margin
     usable_height = page_height - 2 * margin
     cell_width = usable_width / columns
