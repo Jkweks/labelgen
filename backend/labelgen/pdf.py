@@ -708,7 +708,7 @@ def build_pdf(
     page_width, page_height = letter
     margin = 0.35 * inch
     columns = 2
-    rows = 5
+    rows = 6
     usable_width = page_width - 2 * margin
     usable_height = page_height - 2 * margin
     cell_width = usable_width / columns
