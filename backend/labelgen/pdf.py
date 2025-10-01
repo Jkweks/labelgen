@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import io
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Iterable, Optional
+from urllib.parse import urlparse
 
 import requests
 from PIL import Image
@@ -47,18 +49,69 @@ class LabelData:
 class ImageCache:
     """Cache remote images while generating the PDF to reduce network calls."""
 
-    def __init__(self) -> None:
+    def __init__(self, uploads_root: str | None = None) -> None:
         self._store: dict[str, Optional[Image.Image]] = {}
+        self._uploads_root = Path(uploads_root).resolve() if uploads_root else None
+
+    def _load_local_image(self, url: str) -> Optional[Image.Image]:
+        if not url:
+            return None
+
+        parsed = urlparse(url)
+        candidate: Path | None = None
+
+        if parsed.scheme in {"http", "https"}:
+            return None
+        if parsed.scheme == "file":
+            candidate = Path(parsed.path)
+        else:
+            text = parsed.path or url
+            if not text:
+                return None
+            stripped = text.lstrip("/")
+            path_value = stripped
+            if stripped.startswith("uploads/"):
+                parts = stripped.split("/", 1)
+                path_value = parts[1] if len(parts) == 2 else ""
+            if not path_value:
+                return None
+
+            path_candidate = Path(path_value)
+            if path_candidate.is_absolute():
+                candidate = path_candidate
+            elif self._uploads_root is not None:
+                tentative = (self._uploads_root / path_candidate).resolve()
+                try:
+                    tentative.relative_to(self._uploads_root)
+                except ValueError:
+                    return None
+                candidate = tentative
+
+        if candidate is None or not candidate.exists():
+            return None
+
+        try:
+            with candidate.open("rb") as handle:
+                image = Image.open(handle)
+                image.load()
+            return image.copy()
+        except Exception:
+            return None
 
     def get(self, url: str) -> Optional[Image.Image]:
         if url in self._store:
             return self._store[url]
 
         try:
-            response = requests.get(url, timeout=10)
-            response.raise_for_status()
-            image = Image.open(io.BytesIO(response.content))
-            image.load()
+            parsed = urlparse(url)
+            if parsed.scheme in {"http", "https"}:
+                response = requests.get(url, timeout=10)
+                response.raise_for_status()
+                image = Image.open(io.BytesIO(response.content))
+                image.load()
+                image = image.copy()
+            else:
+                image = self._load_local_image(url)
             self._store[url] = image
             return image
         except Exception:
@@ -335,7 +388,10 @@ def draw_label(
         )
 
 
-def build_pdf(labels: Iterable[tuple[LabelData, int]]) -> bytes:
+def build_pdf(
+    labels: Iterable[tuple[LabelData, int]],
+    uploads_root: str | None = None,
+) -> bytes:
     """Generate a PDF containing the provided labels."""
 
     buffer = io.BytesIO()
@@ -349,7 +405,7 @@ def build_pdf(labels: Iterable[tuple[LabelData, int]]) -> bytes:
     cell_width = usable_width / columns
     cell_height = usable_height / rows
 
-    image_cache = ImageCache()
+    image_cache = ImageCache(uploads_root)
 
     index = 0
     for label, copies in labels:

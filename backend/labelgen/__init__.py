@@ -455,7 +455,7 @@ def create_app(test_config: dict[str, Any] | None = None) -> Flask:
             )
             chosen.append((label_data, max(1, copies_value)))
 
-        pdf_bytes = pdf.build_pdf(chosen)
+        pdf_bytes = pdf.build_pdf(chosen, uploads_root=app.config.get("UPLOAD_FOLDER"))
         timestamp = datetime.utcnow().strftime("%Y%m%d-%H%M%S")
         return send_file(
             io.BytesIO(pdf_bytes),
