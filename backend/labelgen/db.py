@@ -8,6 +8,8 @@ from typing import Iterable, Mapping
 import click
 from flask import current_app, g
 
+from . import layouts
+
 
 def get_db() -> sqlite3.Connection:
     """Return a connection to the application's SQLite database."""
@@ -42,7 +44,8 @@ def init_db() -> None:
             accent_color TEXT NOT NULL DEFAULT '#0a3d62',
             text_align TEXT NOT NULL DEFAULT 'left',
             include_description INTEGER NOT NULL DEFAULT 1,
-            parts_per_label INTEGER NOT NULL DEFAULT 1
+            parts_per_label INTEGER NOT NULL DEFAULT 1,
+            layout_config TEXT
         );
 
         CREATE TABLE IF NOT EXISTS label (
@@ -79,6 +82,8 @@ def init_db() -> None:
         database.execute(
             "ALTER TABLE template ADD COLUMN parts_per_label INTEGER NOT NULL DEFAULT 1"
         )
+    if "layout_config" not in template_columns:
+        database.execute("ALTER TABLE template ADD COLUMN layout_config TEXT")
 
     label_columns = {row["name"] for row in database.execute("PRAGMA table_info(label)")}
     if "manufacturer_right" not in label_columns:
@@ -119,6 +124,9 @@ def seed_default_templates() -> None:
             "text_align": "left",
             "include_description": 1,
             "parts_per_label": 1,
+            "layout_config": layouts.dumps_layout_config(
+                layouts.default_layout_config(1, True)
+            ),
         },
         {
             "name": "Poster",
@@ -128,6 +136,9 @@ def seed_default_templates() -> None:
             "text_align": "center",
             "include_description": 1,
             "parts_per_label": 1,
+            "layout_config": layouts.dumps_layout_config(
+                layouts.default_layout_config(1, True)
+            ),
         },
     )
 
@@ -140,7 +151,8 @@ def seed_default_templates() -> None:
             accent_color,
             text_align,
             include_description,
-            parts_per_label
+            parts_per_label,
+            layout_config
         )
         VALUES (
             :name,
@@ -149,7 +161,8 @@ def seed_default_templates() -> None:
             :accent_color,
             :text_align,
             :include_description,
-            :parts_per_label
+            :parts_per_label,
+            :layout_config
         )
         """,
         templates,
@@ -184,10 +197,11 @@ def upsert_template(data: Mapping[str, object]) -> int:
                    accent_color = :accent_color,
                    text_align = :text_align,
                    include_description = :include_description,
-                   parts_per_label = :parts_per_label
+                   parts_per_label = :parts_per_label,
+                   layout_config = :layout_config
              WHERE id = :id
-            """,
-            data,
+        """,
+        data,
         )
         template_id = int(data["id"])
     else:
@@ -200,7 +214,8 @@ def upsert_template(data: Mapping[str, object]) -> int:
                 accent_color,
                 text_align,
                 include_description,
-                parts_per_label
+                parts_per_label,
+                layout_config
             )
             VALUES (
                 :name,
@@ -209,10 +224,11 @@ def upsert_template(data: Mapping[str, object]) -> int:
                 :accent_color,
                 :text_align,
                 :include_description,
-                :parts_per_label
+                :parts_per_label,
+                :layout_config
             )
-            """,
-            data,
+        """,
+        data,
         )
         template_id = int(cursor.lastrowid)
     database.commit()
@@ -230,7 +246,7 @@ def fetch_labels() -> list[sqlite3.Row]:
     return database.execute(
         """
         SELECT label.*, template.name AS template_name, template.image_position, template.accent_color,
-               template.text_align, template.include_description, template.parts_per_label
+               template.text_align, template.include_description, template.parts_per_label, template.layout_config
           FROM label
           JOIN template ON template.id = label.template_id
          ORDER BY label.manufacturer COLLATE NOCASE, label.part_number COLLATE NOCASE
@@ -307,7 +323,7 @@ def fetch_label_with_template(label_id: int) -> sqlite3.Row | None:
     return database.execute(
         """
         SELECT label.*, template.name AS template_name, template.image_position, template.accent_color,
-               template.text_align, template.include_description, template.parts_per_label
+               template.text_align, template.include_description, template.parts_per_label, template.layout_config
           FROM label
           JOIN template ON template.id = label.template_id
          WHERE label.id = ?

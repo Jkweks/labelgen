@@ -19,15 +19,343 @@ function resolveApiBase() {
 
 const API_BASE = resolveApiBase();
 
-const emptyTemplateForm = {
-  name: '',
-  description: '',
-  image_position: 'left',
-  accent_color: '#0a3d62',
-  text_align: 'left',
-  include_description: true,
-  parts_per_label: 1,
-};
+const FIELD_LIBRARY = [
+  { key: 'manufacturer', label: 'Manufacturer', sample: 'Acme Industries' },
+  { key: 'part_number', label: 'Part number', sample: 'ACM-42-9000' },
+  {
+    key: 'description',
+    label: 'Description',
+    sample: 'Heavy duty fastener with zinc coating',
+    descriptionDependent: true,
+  },
+  { key: 'stock_quantity', label: 'Quantity', sample: 'Qty: 128' },
+  { key: 'bin_location', label: 'Bin', sample: 'Bin: A3-14' },
+  { key: 'notes', label: 'Notes', sample: 'Handle with care' },
+  {
+    key: 'manufacturer_right',
+    label: 'Manufacturer (right)',
+    sample: 'Globex Corp',
+    requiresDual: true,
+  },
+  {
+    key: 'part_number_right',
+    label: 'Part number (right)',
+    sample: 'GBX-77-100',
+    requiresDual: true,
+  },
+  {
+    key: 'description_right',
+    label: 'Description (right)',
+    sample: 'Secondary component details',
+    requiresDual: true,
+    descriptionDependent: true,
+  },
+  {
+    key: 'stock_quantity_right',
+    label: 'Quantity (right)',
+    sample: 'Qty: 64',
+    requiresDual: true,
+  },
+  {
+    key: 'bin_location_right',
+    label: 'Bin (right)',
+    sample: 'Bin: B2-07',
+    requiresDual: true,
+  },
+  {
+    key: 'notes_right',
+    label: 'Notes (right)',
+    sample: 'Secondary notes',
+    requiresDual: true,
+  },
+];
+
+const FIELD_MAP = FIELD_LIBRARY.reduce((map, field) => {
+  map[field.key] = field;
+  return map;
+}, {});
+
+const DESCRIPTION_KEYS = new Set(['description', 'description_right']);
+
+const DEFAULT_SINGLE_BLOCKS = [
+  { key: 'manufacturer', width: 'half' },
+  { key: 'part_number', width: 'half' },
+  { key: 'description', width: 'full' },
+  { key: 'stock_quantity', width: 'half' },
+  { key: 'bin_location', width: 'half' },
+  { key: 'notes', width: 'full' },
+];
+
+const DEFAULT_DUAL_BLOCKS = [
+  { key: 'manufacturer', width: 'half' },
+  { key: 'part_number', width: 'half' },
+  { key: 'manufacturer_right', width: 'half' },
+  { key: 'part_number_right', width: 'half' },
+  { key: 'description', width: 'full' },
+  { key: 'description_right', width: 'full' },
+  { key: 'stock_quantity', width: 'half' },
+  { key: 'bin_location', width: 'half' },
+  { key: 'stock_quantity_right', width: 'half' },
+  { key: 'bin_location_right', width: 'half' },
+  { key: 'notes', width: 'full' },
+  { key: 'notes_right', width: 'full' },
+];
+
+const SAMPLE_TEXT = FIELD_LIBRARY.reduce((accumulator, field) => {
+  accumulator[field.key] = field.sample;
+  return accumulator;
+}, {});
+
+function cloneBlocks(blocks = []) {
+  return blocks.map((block) => ({
+    key: block.key,
+    width: block.width === 'half' ? 'half' : 'full',
+  }));
+}
+
+function createDefaultLayoutConfig(partsPerLabel = 1, includeDescription = true) {
+  const base = partsPerLabel === 2 ? DEFAULT_DUAL_BLOCKS : DEFAULT_SINGLE_BLOCKS;
+  const filtered = includeDescription
+    ? base
+    : base.filter((block) => !DESCRIPTION_KEYS.has(block.key));
+  return { version: 1, blocks: cloneBlocks(filtered) };
+}
+
+function normalizeLayoutConfig(raw, partsPerLabel = 1, includeDescription = true) {
+  let parsed = raw;
+  if (typeof raw === 'string') {
+    try {
+      parsed = JSON.parse(raw);
+    } catch (error) {
+      parsed = null;
+    }
+  }
+
+  const normalized = [];
+  if (parsed && typeof parsed === 'object' && Array.isArray(parsed.blocks)) {
+    for (const item of parsed.blocks) {
+      if (!item || typeof item !== 'object') {
+        continue;
+      }
+      const key = item.key;
+      if (typeof key !== 'string' || normalized.some((block) => block.key === key)) {
+        continue;
+      }
+      const fieldMeta = FIELD_MAP[key];
+      if (!fieldMeta) {
+        continue;
+      }
+      if (fieldMeta.requiresDual && partsPerLabel !== 2) {
+        continue;
+      }
+      if (DESCRIPTION_KEYS.has(key) && !includeDescription) {
+        continue;
+      }
+      normalized.push({
+        key,
+        width: item.width === 'half' ? 'half' : 'full',
+      });
+    }
+  }
+
+  if (!normalized.length) {
+    return createDefaultLayoutConfig(partsPerLabel, includeDescription);
+  }
+
+  return { version: 1, blocks: normalized };
+}
+
+function createEmptyTemplateForm() {
+  return {
+    name: '',
+    description: '',
+    image_position: 'left',
+    accent_color: '#0a3d62',
+    text_align: 'left',
+    include_description: true,
+    parts_per_label: 1,
+    layout_config: createDefaultLayoutConfig(1, true),
+  };
+}
+
+function TemplatePlayground({
+  layoutConfig,
+  onChange,
+  partsPerLabel,
+  includeDescription,
+  accentColor,
+  textAlign,
+  imagePosition,
+}) {
+  const [selectedField, setSelectedField] = useState('');
+  const blocks = layoutConfig?.blocks ?? [];
+
+  const usedKeys = useMemo(() => new Set(blocks.map((block) => block.key)), [blocks]);
+
+  const availableFields = useMemo(() => {
+    return FIELD_LIBRARY.filter((field) => {
+      if (field.requiresDual && partsPerLabel !== 2) {
+        return false;
+      }
+      if (field.descriptionDependent && !includeDescription) {
+        return false;
+      }
+      return !usedKeys.has(field.key);
+    });
+  }, [partsPerLabel, includeDescription, usedKeys]);
+
+  function updateBlocks(nextBlocks) {
+    onChange({ version: 1, blocks: cloneBlocks(nextBlocks) });
+  }
+
+  function addField() {
+    if (!selectedField) {
+      return;
+    }
+    const next = [...blocks, { key: selectedField, width: 'full' }];
+    setSelectedField('');
+    updateBlocks(next);
+  }
+
+  function removeField(index) {
+    const next = blocks.filter((_, idx) => idx !== index);
+    updateBlocks(next);
+  }
+
+  function moveField(index, direction) {
+    const targetIndex = index + direction;
+    if (targetIndex < 0 || targetIndex >= blocks.length) {
+      return;
+    }
+    const next = [...blocks];
+    const [moved] = next.splice(index, 1);
+    next.splice(targetIndex, 0, moved);
+    updateBlocks(next);
+  }
+
+  function updateWidth(index, width) {
+    const next = blocks.map((block, idx) =>
+      idx === index ? { ...block, width: width === 'half' ? 'half' : 'full' } : block,
+    );
+    updateBlocks(next);
+  }
+
+  const previewBlocks = blocks.length
+    ? blocks
+    : createDefaultLayoutConfig(partsPerLabel, includeDescription).blocks;
+
+  const previewClassName = `playground-preview image-${imagePosition} align-${textAlign}`;
+
+  return (
+    <div className="template-playground">
+      <div className="template-playground-header">
+        <div>
+          <h3>Visual template playground</h3>
+          <p className="playground-hint">
+            Add, reorder, and resize the data fields to match how you want this template to print.
+          </p>
+        </div>
+        <div className="playground-add">
+          <select
+            value={selectedField}
+            onChange={(event) => setSelectedField(event.target.value)}
+          >
+            <option value="">Select field to add</option>
+            {availableFields.map((field) => (
+              <option key={field.key} value={field.key}>
+                {field.label}
+              </option>
+            ))}
+          </select>
+          <button type="button" onClick={addField} disabled={!selectedField}>
+            Add field
+          </button>
+        </div>
+      </div>
+
+      <div className="playground-content">
+        <div className="playground-list">
+          {blocks.length === 0 && (
+            <p className="playground-empty">No fields chosen yet — add one to get started.</p>
+          )}
+          {blocks.map((block, index) => {
+            const field = FIELD_MAP[block.key];
+            return (
+              <div className="playground-row" key={block.key}>
+                <div className="playground-row-main">
+                  <strong>{field?.label ?? block.key}</strong>
+                  <span className="playground-row-subtle">
+                    {block.width === 'half' ? 'Half width' : 'Full width'}
+                  </span>
+                </div>
+                <div className="playground-row-actions">
+                  <label>
+                    Width
+                    <select
+                      value={block.width}
+                      onChange={(event) => updateWidth(index, event.target.value)}
+                    >
+                      <option value="full">Full</option>
+                      <option value="half">Half</option>
+                    </select>
+                  </label>
+                  <div className="playground-row-buttons">
+                    <button
+                      type="button"
+                      onClick={() => moveField(index, -1)}
+                      disabled={index === 0}
+                    >
+                      Move up
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => moveField(index, 1)}
+                      disabled={index === blocks.length - 1}
+                    >
+                      Move down
+                    </button>
+                    <button type="button" className="danger" onClick={() => removeField(index)}>
+                      Remove
+                    </button>
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+
+        <div className="playground-preview-wrapper">
+          <div className="playground-preview-label">Live preview</div>
+          <div className={previewClassName} style={{ borderColor: accentColor }}>
+            {(imagePosition === 'left' || imagePosition === 'top') && (
+              <div className="playground-preview-image" />
+            )}
+            <div className="playground-preview-content">
+              {previewBlocks.map((block) => {
+                const field = FIELD_MAP[block.key];
+                return (
+                  <div
+                    key={block.key}
+                    className={`playground-block ${block.width === 'half' ? 'half' : 'full'}`}
+                  >
+                    <span className="playground-block-label">{field?.label ?? block.key}</span>
+                    <span className="playground-block-value">
+                      {SAMPLE_TEXT[block.key] || 'Sample value'}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+            {imagePosition === 'right' && <div className="playground-preview-image" />}
+          </div>
+          <p className="playground-footnote">
+            Preview uses placeholder content. Actual data comes from each label when printing.
+          </p>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 const emptyLabelForm = {
   manufacturer: '',
@@ -51,7 +379,7 @@ const emptyLabelForm = {
 function App() {
   const [templates, setTemplates] = useState([]);
   const [labels, setLabels] = useState([]);
-  const [templateForm, setTemplateForm] = useState(emptyTemplateForm);
+  const [templateForm, setTemplateForm] = useState(() => createEmptyTemplateForm());
   const [labelForm, setLabelForm] = useState(emptyLabelForm);
   const [editingTemplateId, setEditingTemplateId] = useState(null);
   const [editingLabelId, setEditingLabelId] = useState(null);
@@ -129,7 +457,16 @@ function App() {
       throw new Error('Failed to load templates');
     }
     const data = await response.json();
-    setTemplates(data);
+    setTemplates(
+      data.map((template) => ({
+        ...template,
+        layout_config: normalizeLayoutConfig(
+          template.layout_config,
+          template.parts_per_label,
+          template.include_description,
+        ),
+      })),
+    );
   }
 
   async function loadLabels() {
@@ -138,11 +475,25 @@ function App() {
       throw new Error('Failed to load labels');
     }
     const data = await response.json();
-    setLabels(data);
+    setLabels(
+      data.map((label) => ({
+        ...label,
+        template: label.template
+          ? {
+              ...label.template,
+              layout_config: normalizeLayoutConfig(
+                label.template.layout_config,
+                label.template.parts_per_label,
+                label.template.include_description,
+              ),
+            }
+          : label.template,
+      })),
+    );
   }
 
   function resetTemplateForm() {
-    setTemplateForm(emptyTemplateForm);
+    setTemplateForm(createEmptyTemplateForm());
     setEditingTemplateId(null);
   }
 
@@ -161,11 +512,53 @@ function App() {
 
   function handleTemplateChange(event) {
     const { name, value, type, checked } = event.target;
-    setTemplateForm((form) => ({
-      ...form,
-      [name]:
-        type === 'checkbox' ? checked : name === 'parts_per_label' ? Number(value) : value,
-    }));
+    setTemplateForm((form) => {
+      const parsedValue =
+        type === 'checkbox'
+          ? checked
+          : name === 'parts_per_label'
+          ? Number(value)
+          : value;
+
+      if (name === 'include_description') {
+        const includeDescription = Boolean(parsedValue);
+        const filteredLayout = includeDescription
+          ? form.layout_config
+          : {
+              ...form.layout_config,
+              blocks: (form.layout_config?.blocks ?? []).filter(
+                (block) => !DESCRIPTION_KEYS.has(block.key),
+              ),
+            };
+        return {
+          ...form,
+          include_description: includeDescription,
+          layout_config: normalizeLayoutConfig(
+            filteredLayout,
+            form.parts_per_label,
+            includeDescription,
+          ),
+        };
+      }
+
+      if (name === 'parts_per_label') {
+        const partsPerLabel = Number(parsedValue) || 1;
+        return {
+          ...form,
+          parts_per_label: partsPerLabel,
+          layout_config: normalizeLayoutConfig(
+            form.layout_config,
+            partsPerLabel,
+            form.include_description,
+          ),
+        };
+      }
+
+      return {
+        ...form,
+        [name]: parsedValue,
+      };
+    });
   }
 
   function handleLabelChange(event) {
@@ -209,10 +602,19 @@ function App() {
       ? `${API_BASE}/api/templates/${editingTemplateId}`
       : `${API_BASE}/api/templates`;
 
+    const payload = {
+      ...templateForm,
+      layout_config: normalizeLayoutConfig(
+        templateForm.layout_config,
+        templateForm.parts_per_label,
+        templateForm.include_description,
+      ),
+    };
+
     const response = await fetch(url, {
       method,
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(templateForm),
+      body: JSON.stringify(payload),
     });
 
     if (!response.ok) {
@@ -306,6 +708,11 @@ function App() {
       text_align: template.text_align,
       include_description: Boolean(template.include_description),
       parts_per_label: template.parts_per_label || 1,
+      layout_config: normalizeLayoutConfig(
+        template.layout_config,
+        template.parts_per_label || 1,
+        Boolean(template.include_description),
+      ),
     });
   }
 
@@ -507,6 +914,26 @@ function App() {
             />
             Include description on labels
           </label>
+          <div className="layout-playground">
+            <TemplatePlayground
+              layoutConfig={templateForm.layout_config}
+              onChange={(nextLayout) =>
+                setTemplateForm((form) => ({
+                  ...form,
+                  layout_config: normalizeLayoutConfig(
+                    nextLayout,
+                    form.parts_per_label,
+                    form.include_description,
+                  ),
+                }))
+              }
+              partsPerLabel={templateForm.parts_per_label}
+              includeDescription={templateForm.include_description}
+              accentColor={templateForm.accent_color}
+              textAlign={templateForm.text_align}
+              imagePosition={templateForm.image_position}
+            />
+          </div>
           <button type="submit" className="primary">
             {editingTemplateId ? 'Update template' : 'Create template'}
           </button>
