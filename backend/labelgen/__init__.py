@@ -57,6 +57,7 @@ def create_app(test_config: dict[str, Any] | None = None) -> Flask:
             "layout_config": layouts.normalize_layout_config(
                 record["layout_config"], parts_per_label, include_description
             ),
+            "field_formats": layouts.normalize_field_formats(record["field_formats"]),
         }
 
     def _normalize_image_reference(value: str | None) -> str | None:
@@ -116,6 +117,7 @@ def create_app(test_config: dict[str, Any] | None = None) -> Flask:
                     int(record["parts_per_label"] or 1),
                     bool(record["include_description"]),
                 ),
+                "field_formats": layouts.normalize_field_formats(record["field_formats"]),
             },
         }
 
@@ -197,6 +199,9 @@ def create_app(test_config: dict[str, Any] | None = None) -> Flask:
             layout_payload, parts_value, include_description
         )
         data["layout_config"] = layouts.dumps_layout_config(normalized_layout)
+        formats_payload = payload.get("field_formats")
+        normalized_formats = layouts.normalize_field_formats(formats_payload)
+        data["field_formats"] = layouts.dumps_field_formats(normalized_formats)
         template_id = db.upsert_template(data)
         template = db.fetch_template(template_id)
         if template is None:
@@ -235,6 +240,9 @@ def create_app(test_config: dict[str, Any] | None = None) -> Flask:
             layout_payload, parts_value, include_description
         )
         data["layout_config"] = layouts.dumps_layout_config(normalized_layout)
+        formats_payload = payload.get("field_formats")
+        normalized_formats = layouts.normalize_field_formats(formats_payload)
+        data["field_formats"] = layouts.dumps_field_formats(normalized_formats)
         db.upsert_template(data)
         template = db.fetch_template(template_id)
         if template is None:
@@ -423,6 +431,12 @@ def create_app(test_config: dict[str, Any] | None = None) -> Flask:
                 text_align=label["text_align"],
                 include_description=bool(label["include_description"]),
                 parts_per_label=int(label["parts_per_label"] or 1),
+                layout_config=layouts.normalize_layout_config(
+                    label["layout_config"],
+                    int(label["parts_per_label"] or 1),
+                    bool(label["include_description"]),
+                ),
+                field_formats=layouts.normalize_field_formats(label["field_formats"]),
             )
             left_part = pdf.PartDetails(
                 manufacturer=label["manufacturer"],
