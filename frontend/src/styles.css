@@ -54,6 +54,55 @@ body {
   color: var(--color-muted);
 }
 
+.tab-bar {
+  display: flex;
+  gap: 0.75rem;
+  background: rgba(15, 23, 42, 0.6);
+  border: 1px solid var(--color-border);
+  border-radius: 14px;
+  padding: 0.5rem;
+  backdrop-filter: blur(12px);
+}
+
+.tab-button {
+  flex: 1;
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.45rem;
+  background: transparent;
+  border: none;
+  color: var(--color-muted);
+  padding: 0.65rem 0.9rem;
+  border-radius: 10px;
+  font-weight: 600;
+  transition: background 0.2s ease, color 0.2s ease, transform 0.2s ease;
+}
+
+.tab-button:not(.active):hover {
+  background: rgba(15, 23, 42, 0.45);
+  color: var(--color-text);
+}
+
+.tab-button.active {
+  background: linear-gradient(135deg, rgba(37, 99, 235, 0.25), rgba(124, 58, 237, 0.25));
+  color: var(--color-text);
+  box-shadow: 0 10px 20px rgba(37, 99, 235, 0.2);
+}
+
+.tab-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 1.65rem;
+  padding: 0.1rem 0.5rem;
+  border-radius: 999px;
+  background: rgba(37, 99, 235, 0.35);
+  color: var(--color-text);
+  font-size: 0.8rem;
+}
+
 button {
   font: inherit;
   cursor: pointer;
@@ -338,6 +387,38 @@ label.full {
   width: 70px;
 }
 
+.queue-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+  margin-bottom: 1rem;
+}
+
+.queue-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 1rem;
+  padding: 0.85rem 1rem;
+  border-radius: 12px;
+  border: 1px solid var(--color-border);
+  background: rgba(15, 23, 42, 0.45);
+}
+
+.queue-main {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.queue-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  align-items: flex-end;
+  text-align: right;
+}
+
 @media (max-width: 880px) {
   .hero {
     flex-direction: column;
@@ -356,6 +437,26 @@ label.full {
 
   .table-row .actions {
     justify-content: flex-start;
+  }
+}
+
+@media (max-width: 640px) {
+  .tab-bar {
+    flex-direction: column;
+  }
+
+  .tab-button {
+    justify-content: space-between;
+  }
+
+  .queue-row {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .queue-meta {
+    align-items: flex-start;
+    text-align: left;
   }
 }
 
