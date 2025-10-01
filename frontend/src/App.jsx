@@ -235,6 +235,38 @@ function createEmptyTemplateForm() {
   };
 }
 
+function createEmptyLabelForm(templateId = '') {
+  return {
+    template_id: templateId ? String(templateId) : '',
+    default_copies: 1,
+    manufacturer: '',
+    part_number: '',
+    description: '',
+    stock_quantity: '',
+    bin_location: '',
+    image_url: '',
+    notes: '',
+    manufacturer_right: '',
+    part_number_right: '',
+    description_right: '',
+    stock_quantity_right: '',
+    bin_location_right: '',
+    image_url_right: '',
+    notes_right: '',
+  };
+}
+
+function formatSampleValue(templateText, rawValue) {
+  const value = rawValue ?? '';
+  const upper = value.toUpperCase();
+  const lower = value.toLowerCase();
+  const title = value.replace(/\w\S*/g, (word) => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase());
+  return templateText
+    .replace(/\{value_upper\}/gi, upper)
+    .replace(/\{value_lower\}/gi, lower)
+    .replace(/\{value_title\}/gi, title)
+    .replace(/\{value\}/gi, value);
+}
 function TemplatePlayground({
   layoutConfig,
   onChange,
@@ -243,6 +275,7 @@ function TemplatePlayground({
   accentColor,
   textAlign,
   imagePosition,
+  fieldFormats,
 }) {
   const [selectedField, setSelectedField] = useState('');
   const blocks = layoutConfig?.blocks ?? [];
@@ -303,6 +336,659 @@ function TemplatePlayground({
 
   const previewClassName = `playground-preview image-${imagePosition} align-${textAlign}`;
 
+  const formattedSamples = useMemo(() => {
+    const payload = fieldFormats || prepareFieldFormatPayload(null, partsPerLabel, includeDescription);
+    const result = {};
+    for (const block of previewBlocks) {
+      const field = FIELD_MAP[block.key];
+      if (!field) {
+        continue;
+      }
+      const sample = SAMPLE_TEXT[field.key] ?? '';
+      const templateText = payload[field.key] ?? FIELD_FORMAT_DEFAULTS[field.key] ?? '{value}';
+      result[field.key] = formatSampleValue(templateText, sample);
+    }
+    return result;
+  }, [fieldFormats, previewBlocks, partsPerLabel, includeDescription]);
+
+  return (
+    <div className="template-playground">
+      <div className="template-playground-header">
+        <div>
+          <h3>Layout playground</h3>
+          <p className="playground-hint">
+            Arrange the blocks below to control how label data appears in the PDF preview.
+          </p>
+        </div>
+        <div className="playground-add">
+          <select value={selectedField} onChange={(event) => setSelectedField(event.target.value)}>
+            <option value="">Add field…</option>
+            {availableFields.map((field) => (
+              <option value={field.key} key={field.key}>
+                {field.label}
+              </option>
+            ))}
+          </select>
+          <button type="button" onClick={addField} disabled={!selectedField}>
+            Add field
+          </button>
+        </div>
+      </div>
+
+      <div className="playground-content">
+        <div className="playground-list">
+          {previewBlocks.length ? (
+            previewBlocks.map((block, index) => {
+              const field = FIELD_MAP[block.key];
+              if (!field) {
+                return null;
+              }
+              return (
+                <div className="playground-row" key={block.key}>
+                  <div className="playground-row-main">
+                    <span>{field.label}</span>
+                    <span className="playground-row-subtle">{block.width === 'half' ? 'Half width' : 'Full width'}</span>
+                  </div>
+                  <div className="playground-row-actions">
+                    <label>
+                      Width
+                      <select
+                        value={block.width === 'half' ? 'half' : 'full'}
+                        onChange={(event) => updateWidth(index, event.target.value)}
+                      >
+                        <option value="full">Full</option>
+                        <option value="half">Half</option>
+                      </select>
+                    </label>
+                    <div className="playground-row-buttons">
+                      <button type="button" onClick={() => moveField(index, -1)} disabled={index === 0}>
+                        Move up
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => moveField(index, 1)}
+                        disabled={index === previewBlocks.length - 1}
+                      >
+                        Move down
+                      </button>
+                      <button type="button" className="danger" onClick={() => removeField(index)}>
+                        Remove
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              );
+            })
+          ) : (
+            <p className="playground-empty">No fields configured.</p>
+          )}
+        </div>
+
+        <div className="playground-preview-wrapper">
+          <span className="playground-preview-label">Live preview</span>
+          <div className={previewClassName} style={{ borderColor: accentColor }}>
+            {imagePosition !== 'none' && <div className="playground-preview-image" />}
+            <div className="playground-preview-content">
+              {previewBlocks.map((block) => {
+                const field = FIELD_MAP[block.key];
+                if (!field) {
+                  return null;
+                }
+                return (
+                  <div className={`playground-block ${block.width === 'half' ? 'half' : 'full'}`} key={block.key}>
+                    <span className="playground-block-label">{field.label}</span>
+                    <span className="playground-block-value">{formattedSamples[block.key] ?? SAMPLE_TEXT[block.key]}</span>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+          <p className="playground-footnote">Preview uses example content for illustration only.</p>
+        </div>
+      </div>
+    </div>
+  );
+}
+function App() {
+  const [loading, setLoading] = useState(false);
+  const [message, setMessage] = useState('');
+  const [error, setError] = useState('');
+  const [activeTab, setActiveTab] = useState('new-label');
+  const [templates, setTemplates] = useState([]);
+  const [labels, setLabels] = useState([]);
+  const [templateForm, setTemplateForm] = useState(createEmptyTemplateForm());
+  const [editingTemplateId, setEditingTemplateId] = useState(null);
+  const [labelForm, setLabelForm] = useState(createEmptyLabelForm());
+  const [editingLabelId, setEditingLabelId] = useState(null);
+  const [imageFileLeft, setImageFileLeft] = useState(null);
+  const [imageFileRight, setImageFileRight] = useState(null);
+  const [printSelection, setPrintSelection] = useState({});
+  const [downloadingPdf, setDownloadingPdf] = useState(false);
+  const [submittingLabel, setSubmittingLabel] = useState(false);
+  const [submittingTemplate, setSubmittingTemplate] = useState(false);
+
+  const leftImageInputRef = useRef(null);
+  const rightImageInputRef = useRef(null);
+
+  useEffect(() => {
+    loadAll();
+  }, []);
+
+  useEffect(() => {
+    if (!message) {
+      return undefined;
+    }
+    const timeout = setTimeout(() => setMessage(''), 4000);
+    return () => clearTimeout(timeout);
+  }, [message]);
+
+  useEffect(() => {
+    if (!error) {
+      return undefined;
+    }
+    const timeout = setTimeout(() => setError(''), 6000);
+    return () => clearTimeout(timeout);
+  }, [error]);
+
+  useEffect(() => {
+    setPrintSelection((selection) => {
+      const next = {};
+      for (const label of labels) {
+        const current = selection[label.id];
+        if (current?.selected) {
+          next[label.id] = { selected: true, copies: current.copies || label.default_copies || 1 };
+        }
+      }
+      return next;
+    });
+  }, [labels]);
+
+  const selectedTemplate = useMemo(() => {
+    const templateId = Number(labelForm.template_id);
+    if (!templateId) {
+      return null;
+    }
+    return templates.find((template) => template.id === templateId) || null;
+  }, [labelForm.template_id, templates]);
+
+  const requiresDualParts = selectedTemplate?.parts_per_label === 2;
+  const descriptionEnabled = selectedTemplate ? !!selectedTemplate.include_description : true;
+
+  useEffect(() => {
+    if (requiresDualParts) {
+      return;
+    }
+    setLabelForm((form) => ({
+      ...form,
+      manufacturer_right: '',
+      part_number_right: '',
+      description_right: '',
+      stock_quantity_right: '',
+      bin_location_right: '',
+      image_url_right: '',
+      notes_right: '',
+    }));
+  }, [requiresDualParts]);
+
+  useEffect(() => {
+    if (descriptionEnabled) {
+      return;
+    }
+    setLabelForm((form) => ({
+      ...form,
+      description: '',
+      notes: '',
+      description_right: '',
+      notes_right: '',
+    }));
+  }, [descriptionEnabled]);
+
+  const leftDividerLabel = requiresDualParts ? 'Left side details' : 'Label details';
+  const leftSideSuffix = requiresDualParts ? ' (left)' : '';
+
+  const formatFields = useMemo(() => {
+    return FIELD_LIBRARY.filter((field) => {
+      if (field.requiresDual && templateForm.parts_per_label !== 2) {
+        return false;
+      }
+      if (field.descriptionDependent && !templateForm.include_description) {
+        return false;
+      }
+      return true;
+    });
+  }, [templateForm.parts_per_label, templateForm.include_description]);
+
+  const templateFieldFormats = useMemo(
+    () =>
+      prepareFieldFormatPayload(
+        templateForm.field_formats,
+        templateForm.parts_per_label,
+        templateForm.include_description,
+      ),
+    [templateForm.field_formats, templateForm.parts_per_label, templateForm.include_description],
+  );
+
+  const selectedLabels = useMemo(
+    () => labels.filter((label) => printSelection[label.id]?.selected),
+    [labels, printSelection],
+  );
+
+  const queueItems = useMemo(
+    () =>
+      selectedLabels.map((label) => ({
+        label,
+        copies: printSelection[label.id]?.copies || label.default_copies || 1,
+      })),
+    [selectedLabels, printSelection],
+  );
+  async function fetchJson(path, options) {
+    const response = await fetch(`${API_BASE}${path}`, options);
+    if (!response.ok) {
+      let messageText = `Request failed with status ${response.status}`;
+      try {
+        const data = await response.json();
+        if (data?.error) {
+          messageText = data.error;
+        }
+      } catch (parseError) {
+        // ignore JSON parse issues
+      }
+      throw new Error(messageText);
+    }
+    if (response.status === 204) {
+      return null;
+    }
+    return response.json();
+  }
+
+  async function loadAll() {
+    setLoading(true);
+    setError('');
+    try {
+      const [templatesData, labelsData] = await Promise.all([
+        fetchJson('/api/templates'),
+        fetchJson('/api/labels'),
+      ]);
+      setTemplates(Array.isArray(templatesData) ? templatesData : []);
+      setLabels(Array.isArray(labelsData) ? labelsData : []);
+    } catch (loadError) {
+      console.error(loadError);
+      setError(loadError.message || 'Failed to load data');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  function resetTemplateForm() {
+    setEditingTemplateId(null);
+    setTemplateForm(createEmptyTemplateForm());
+  }
+
+  function resetLabelForm() {
+    setEditingLabelId(null);
+    setLabelForm(createEmptyLabelForm());
+    setImageFileLeft(null);
+    setImageFileRight(null);
+    if (leftImageInputRef.current) {
+      leftImageInputRef.current.value = '';
+    }
+    if (rightImageInputRef.current) {
+      rightImageInputRef.current.value = '';
+    }
+  }
+
+  function handleTemplateChange(event) {
+    const { name, value, type, checked } = event.target;
+    setTemplateForm((form) => {
+      if (name === 'parts_per_label') {
+        const parts = parseInt(value, 10) === 2 ? 2 : 1;
+        return {
+          ...form,
+          parts_per_label: parts,
+          layout_config: normalizeLayoutConfig(form.layout_config, parts, form.include_description),
+          field_formats: prepareFieldFormatPayload(form.field_formats, parts, form.include_description),
+        };
+      }
+      if (name === 'include_description') {
+        const include = type === 'checkbox' ? checked : value === 'true';
+        return {
+          ...form,
+          include_description: include,
+          layout_config: normalizeLayoutConfig(form.layout_config, form.parts_per_label, include),
+          field_formats: prepareFieldFormatPayload(form.field_formats, form.parts_per_label, include),
+        };
+      }
+      return {
+        ...form,
+        [name]: value,
+      };
+    });
+  }
+
+  function handleFieldFormatChange(event) {
+    const { name, value } = event.target;
+    setTemplateForm((form) => ({
+      ...form,
+      field_formats: {
+        ...form.field_formats,
+        [name]: value,
+      },
+    }));
+  }
+
+  function handleLabelChange(event) {
+    const { name, value } = event.target;
+    setLabelForm((form) => ({
+      ...form,
+      [name]: value,
+    }));
+  }
+
+  function handleImageFileChange(side, file) {
+    if (side === 'left') {
+      setImageFileLeft(file);
+    } else {
+      setImageFileRight(file);
+    }
+  }
+
+  async function uploadImage(file) {
+    const formData = new FormData();
+    formData.append('file', file);
+    const response = await fetch(`${API_BASE}/api/uploads`, {
+      method: 'POST',
+      body: formData,
+    });
+    if (!response.ok) {
+      let messageText = 'Failed to upload image';
+      try {
+        const data = await response.json();
+        if (data?.error) {
+          messageText = data.error;
+        }
+      } catch (parseError) {
+        // ignore parse errors
+      }
+      throw new Error(messageText);
+    }
+    return response.json();
+  }
+
+  async function submitTemplate(event) {
+    event.preventDefault();
+    setSubmittingTemplate(true);
+    setError('');
+    try {
+      const payload = {
+        name: templateForm.name.trim(),
+        description: templateForm.description.trim(),
+        image_position: templateForm.image_position,
+        accent_color: templateForm.accent_color,
+        text_align: templateForm.text_align,
+        include_description: templateForm.include_description,
+        parts_per_label: templateForm.parts_per_label,
+        layout_config: templateForm.layout_config,
+        field_formats: templateForm.field_formats,
+      };
+      if (!payload.name) {
+        throw new Error('Template name is required');
+      }
+      const method = editingTemplateId ? 'PUT' : 'POST';
+      const path = editingTemplateId ? `/api/templates/${editingTemplateId}` : '/api/templates';
+      await fetchJson(path, {
+        method,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      setMessage(editingTemplateId ? 'Template updated.' : 'Template created.');
+      await loadAll();
+      resetTemplateForm();
+    } catch (submitError) {
+      console.error(submitError);
+      setError(submitError.message || 'Failed to save template');
+    } finally {
+      setSubmittingTemplate(false);
+    }
+  }
+
+  function editTemplate(template) {
+    setActiveTab('templates');
+    setEditingTemplateId(template.id);
+    setTemplateForm({
+      name: template.name ?? '',
+      description: template.description ?? '',
+      image_position: template.image_position ?? 'left',
+      accent_color: template.accent_color ?? '#0a3d62',
+      text_align: template.text_align ?? 'left',
+      include_description: !!template.include_description,
+      parts_per_label: template.parts_per_label ?? 1,
+      layout_config: normalizeLayoutConfig(
+        template.layout_config,
+        template.parts_per_label ?? 1,
+        !!template.include_description,
+      ),
+      field_formats: normalizeFieldFormats(template.field_formats),
+    });
+  }
+
+  async function deleteTemplate(templateId) {
+    if (!window.confirm('Delete this template?')) {
+      return;
+    }
+    setError('');
+    try {
+      await fetchJson(`/api/templates/${templateId}`, { method: 'DELETE' });
+      setMessage('Template deleted.');
+      await loadAll();
+      if (editingTemplateId === templateId) {
+        resetTemplateForm();
+      }
+      if (Number(labelForm.template_id) === templateId) {
+        resetLabelForm();
+      }
+    } catch (deleteError) {
+      console.error(deleteError);
+      setError(deleteError.message || 'Failed to delete template');
+    }
+  }
+  async function submitLabel(event) {
+    event.preventDefault();
+    if (!selectedTemplate) {
+      setError('Select a template for the label.');
+      return;
+    }
+    if (!labelForm.manufacturer.trim() || !labelForm.part_number.trim()) {
+      setError('Manufacturer and part number are required.');
+      return;
+    }
+    if (requiresDualParts) {
+      if (!labelForm.manufacturer_right.trim() || !labelForm.part_number_right.trim()) {
+        setError('Right-side manufacturer and part number are required.');
+        return;
+      }
+    }
+
+    setSubmittingLabel(true);
+    setError('');
+    try {
+      const payload = {
+        template_id: Number(labelForm.template_id),
+        manufacturer: labelForm.manufacturer.trim(),
+        part_number: labelForm.part_number.trim(),
+        description: labelForm.description.trim(),
+        stock_quantity: labelForm.stock_quantity ? Number(labelForm.stock_quantity) : 0,
+        bin_location: labelForm.bin_location.trim(),
+        image_url: labelForm.image_url.trim(),
+        notes: labelForm.notes.trim(),
+        default_copies: labelForm.default_copies ? Number(labelForm.default_copies) : 1,
+        manufacturer_right: labelForm.manufacturer_right.trim(),
+        part_number_right: labelForm.part_number_right.trim(),
+        description_right: labelForm.description_right.trim(),
+        stock_quantity_right: labelForm.stock_quantity_right
+          ? Number(labelForm.stock_quantity_right)
+          : 0,
+        bin_location_right: labelForm.bin_location_right.trim(),
+        image_url_right: labelForm.image_url_right.trim(),
+        notes_right: labelForm.notes_right.trim(),
+      };
+
+      if (imageFileLeft) {
+        const upload = await uploadImage(imageFileLeft);
+        payload.image_url = upload.path || upload.url || payload.image_url;
+      }
+      if (imageFileRight) {
+        const upload = await uploadImage(imageFileRight);
+        payload.image_url_right = upload.path || upload.url || payload.image_url_right;
+      }
+
+      const method = editingLabelId ? 'PUT' : 'POST';
+      const path = editingLabelId ? `/api/labels/${editingLabelId}` : '/api/labels';
+      await fetchJson(path, {
+        method,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      setMessage(editingLabelId ? 'Label updated.' : 'Label created.');
+      await loadAll();
+      resetLabelForm();
+    } catch (submitError) {
+      console.error(submitError);
+      setError(submitError.message || 'Failed to save label');
+    } finally {
+      setSubmittingLabel(false);
+    }
+  }
+
+  function editLabel(label) {
+    setActiveTab('new-label');
+    setEditingLabelId(label.id);
+    setLabelForm({
+      template_id: String(label.template_id ?? ''),
+      default_copies: label.default_copies ?? 1,
+      manufacturer: label.manufacturer ?? '',
+      part_number: label.part_number ?? '',
+      description: label.description ?? '',
+      stock_quantity: label.stock_quantity ?? '',
+      bin_location: label.bin_location ?? '',
+      image_url: label.image_url ?? '',
+      notes: label.notes ?? '',
+      manufacturer_right: label.manufacturer_right ?? '',
+      part_number_right: label.part_number_right ?? '',
+      description_right: label.description_right ?? '',
+      stock_quantity_right: label.stock_quantity_right ?? '',
+      bin_location_right: label.bin_location_right ?? '',
+      image_url_right: label.image_url_right ?? '',
+      notes_right: label.notes_right ?? '',
+    });
+    setImageFileLeft(null);
+    setImageFileRight(null);
+    if (leftImageInputRef.current) {
+      leftImageInputRef.current.value = '';
+    }
+    if (rightImageInputRef.current) {
+      rightImageInputRef.current.value = '';
+    }
+  }
+
+  async function deleteLabel(labelId) {
+    if (!window.confirm('Delete this label?')) {
+      return;
+    }
+    setError('');
+    try {
+      await fetchJson(`/api/labels/${labelId}`, { method: 'DELETE' });
+      setMessage('Label deleted.');
+      await loadAll();
+      if (editingLabelId === labelId) {
+        resetLabelForm();
+      }
+    } catch (deleteError) {
+      console.error(deleteError);
+      setError(deleteError.message || 'Failed to delete label');
+    }
+  }
+
+  function toggleLabelSelection(label) {
+    setPrintSelection((selection) => {
+      const current = selection[label.id];
+      if (current?.selected) {
+        const { [label.id]: _removed, ...rest } = selection;
+        return rest;
+      }
+      return {
+        ...selection,
+        [label.id]: {
+          selected: true,
+          copies: current?.copies || label.default_copies || 1,
+        },
+      };
+    });
+  }
+
+  function updateLabelCopies(labelId, value) {
+    const numeric = Math.max(1, Number(value) || 1);
+    setPrintSelection((selection) => {
+      const current = selection[labelId];
+      if (!current?.selected) {
+        return selection;
+      }
+      return {
+        ...selection,
+        [labelId]: {
+          ...current,
+          copies: numeric,
+        },
+      };
+    });
+  }
+  async function downloadPdf() {
+    if (!queueItems.length) {
+      return;
+    }
+    setDownloadingPdf(true);
+    setError('');
+    try {
+      const payload = {
+        items: queueItems.map(({ label, copies }) => ({
+          label_id: label.id,
+          copies,
+        })),
+      };
+      const response = await fetch(`${API_BASE}/api/labels/print`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      if (!response.ok) {
+        let messageText = 'Failed to generate PDF';
+        try {
+          const data = await response.json();
+          if (data?.error) {
+            messageText = data.error;
+          }
+        } catch (parseError) {
+          // ignore parse errors
+        }
+        throw new Error(messageText);
+      }
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement('a');
+      anchor.href = url;
+      anchor.download = 'labels.pdf';
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      URL.revokeObjectURL(url);
+      setMessage('PDF downloaded.');
+    } catch (downloadError) {
+      console.error(downloadError);
+      setError(downloadError.message || 'Failed to download PDF');
+    } finally {
+      setDownloadingPdf(false);
+    }
+  }
+
   return (
     <div className="page">
       <header className="hero">
@@ -319,29 +1005,31 @@ function TemplatePlayground({
       {error && <div className="banner error">{error}</div>}
 
       <nav className="tab-bar">
-        {[{ key: 'new-label', label: 'New label' }, { key: 'templates', label: 'Templates' }, { key: 'print-queue', label: 'Print queue' }].map(
-          (tab) => {
-            const badgeValue =
-              tab.key === 'new-label'
-                ? labels.length
-                : tab.key === 'templates'
-                ? templates.length
-                : tab.key === 'print-queue'
-                ? selectedLabels.length
-                : 0;
-            return (
-              <button
-                key={tab.key}
-                type="button"
-                className={`tab-button${activeTab === tab.key ? ' active' : ''}`}
-                onClick={() => setActiveTab(tab.key)}
-              >
-                <span>{tab.label}</span>
-                {badgeValue > 0 && <span className="tab-badge">{badgeValue}</span>}
-              </button>
-            );
-          },
-        )}
+        {[
+          { key: 'new-label', label: 'New label' },
+          { key: 'templates', label: 'Templates' },
+          { key: 'print-queue', label: 'Print queue' },
+        ].map((tab) => {
+          const badgeValue =
+            tab.key === 'new-label'
+              ? labels.length
+              : tab.key === 'templates'
+              ? templates.length
+              : tab.key === 'print-queue'
+              ? selectedLabels.length
+              : 0;
+          return (
+            <button
+              key={tab.key}
+              type="button"
+              className={`tab-button${activeTab === tab.key ? ' active' : ''}`}
+              onClick={() => setActiveTab(tab.key)}
+            >
+              <span>{tab.label}</span>
+              {badgeValue > 0 && <span className="tab-badge">{badgeValue}</span>}
+            </button>
+          );
+        })}
       </nav>
 
       {activeTab === 'new-label' && (
@@ -424,14 +1112,16 @@ function TemplatePlayground({
                 {imageFileLeft
                   ? `Selected file: ${imageFileLeft.name}`
                   : labelForm.image_url
-                    ? 'Existing image will be reused unless you pick a new file.'
-                    : 'You can upload an image instead of providing a URL.'}
+                  ? 'Existing image will be reused unless you pick a new file.'
+                  : 'You can upload an image instead of providing a URL.'}
               </span>
             </label>
-            <label>
-              {`Description${leftSideSuffix}`}
-              <input name="description" value={labelForm.description} onChange={handleLabelChange} />
-            </label>
+            {descriptionEnabled && (
+              <label>
+                {`Description${leftSideSuffix}`}
+                <input name="description" value={labelForm.description} onChange={handleLabelChange} />
+              </label>
+            )}
             <label className="full">
               {`Notes${leftSideSuffix}`}
               <textarea name="notes" value={labelForm.notes} onChange={handleLabelChange} rows={3} />
@@ -439,27 +1129,26 @@ function TemplatePlayground({
             {requiresDualParts && (
               <>
                 <div className="form-divider">Right side details</div>
-                <p className="form-subtext">These fields populate the right half of the label.</p>
                 <label>
-                  Manufacturer (right side)
+                  Manufacturer (right)
                   <input
                     name="manufacturer_right"
                     value={labelForm.manufacturer_right}
                     onChange={handleLabelChange}
-                    required={requiresDualParts}
+                    required
                   />
                 </label>
                 <label>
-                  Part number (right side)
+                  Part number (right)
                   <input
                     name="part_number_right"
                     value={labelForm.part_number_right}
                     onChange={handleLabelChange}
-                    required={requiresDualParts}
+                    required
                   />
                 </label>
                 <label>
-                  Quantity on hand (right side)
+                  Quantity on hand (right)
                   <input
                     name="stock_quantity_right"
                     type="number"
@@ -469,49 +1158,42 @@ function TemplatePlayground({
                   />
                 </label>
                 <label>
-                  Bin location (right side)
-                  <input
-                    name="bin_location_right"
-                    value={labelForm.bin_location_right}
-                    onChange={handleLabelChange}
-                  />
+                  Bin location (right)
+                  <input name="bin_location_right" value={labelForm.bin_location_right} onChange={handleLabelChange} />
                 </label>
                 <label>
-                  Image URL (right side)
-                  <input
-                    name="image_url_right"
-                    value={labelForm.image_url_right}
-                    onChange={handleLabelChange}
-                  />
+                  Image URL (right)
+                  <input name="image_url_right" value={labelForm.image_url_right} onChange={handleLabelChange} />
                 </label>
                 <label>
-                  Upload image (right side)
+                  Upload image (right)
                   <input
                     type="file"
                     accept="image/*"
                     ref={rightImageInputRef}
                     onChange={(event) =>
-                      handleImageFileChange('right', event.target.files && event.target.files[0] ? event.target.files[0] : null)
+                      handleImageFileChange(
+                        'right',
+                        event.target.files && event.target.files[0] ? event.target.files[0] : null,
+                      )
                     }
                   />
                   <span className="form-subtext">
                     {imageFileRight
                       ? `Selected file: ${imageFileRight.name}`
                       : labelForm.image_url_right
-                        ? 'Existing image will be reused unless you pick a new file.'
-                        : 'You can upload an image instead of providing a URL.'}
+                      ? 'Existing image will be reused unless you pick a new file.'
+                      : 'Upload an image for the right side or provide a URL.'}
                   </span>
                 </label>
-                <label>
-                  Description (right side)
-                  <input
-                    name="description_right"
-                    value={labelForm.description_right}
-                    onChange={handleLabelChange}
-                  />
-                </label>
+                {descriptionEnabled && (
+                  <label>
+                    Description (right)
+                    <input name="description_right" value={labelForm.description_right} onChange={handleLabelChange} />
+                  </label>
+                )}
                 <label className="full">
-                  Notes (right side)
+                  Notes (right)
                   <textarea
                     name="notes_right"
                     value={labelForm.notes_right}
@@ -521,8 +1203,8 @@ function TemplatePlayground({
                 </label>
               </>
             )}
-            <button type="submit" className="primary">
-              {editingLabelId ? 'Update label' : 'Create label'}
+            <button type="submit" className="primary" disabled={submittingLabel}>
+              {submittingLabel ? 'Saving…' : editingLabelId ? 'Update label' : 'Create label'}
             </button>
           </form>
 
@@ -669,6 +1351,7 @@ function TemplatePlayground({
                 accentColor={templateForm.accent_color}
                 textAlign={templateForm.text_align}
                 imagePosition={templateForm.image_position}
+                fieldFormats={templateFieldFormats}
               />
             </div>
 
@@ -707,8 +1390,8 @@ function TemplatePlayground({
               </div>
             </div>
 
-            <button type="submit" className="primary">
-              {editingTemplateId ? 'Update template' : 'Create template'}
+            <button type="submit" className="primary" disabled={submittingTemplate}>
+              {submittingTemplate ? 'Saving…' : editingTemplateId ? 'Update template' : 'Create template'}
             </button>
           </form>
 
@@ -775,8 +1458,8 @@ function TemplatePlayground({
               <p className="muted">No labels selected yet. Use the New label tab to build your queue.</p>
             )}
           </div>
-          <button type="button" className="primary" onClick={downloadPdf} disabled={!selectedLabels.length}>
-            Download selected as PDF
+          <button type="button" className="primary" onClick={downloadPdf} disabled={!selectedLabels.length || downloadingPdf}>
+            {downloadingPdf ? 'Preparing…' : 'Download selected as PDF'}
           </button>
         </section>
       )}
