@@ -463,6 +463,7 @@ function App() {
   const [imageFileLeft, setImageFileLeft] = useState(null);
   const [imageFileRight, setImageFileRight] = useState(null);
   const [printSelection, setPrintSelection] = useState({});
+  const [labelsPerPage, setLabelsPerPage] = useState(12);
   const [downloadingPdf, setDownloadingPdf] = useState(false);
   const [submittingLabel, setSubmittingLabel] = useState(false);
   const [submittingTemplate, setSubmittingTemplate] = useState(false);
@@ -925,6 +926,27 @@ function App() {
     });
   }
 
+  function selectAllLabels() {
+    if (!labels.length) {
+      return;
+    }
+    setPrintSelection((selection) => {
+      const next = {};
+      for (const label of labels) {
+        const current = selection[label.id];
+        next[label.id] = {
+          selected: true,
+          copies: current?.copies || label.default_copies || 1,
+        };
+      }
+      return next;
+    });
+  }
+
+  function clearLabelSelection() {
+    setPrintSelection({});
+  }
+
   function updateLabelCopies(labelId, value) {
     const numeric = Math.max(1, Number(value) || 1);
     setPrintSelection((selection) => {
@@ -953,6 +975,7 @@ function App() {
           label_id: label.id,
           copies,
         })),
+        labels_per_page: labelsPerPage,
       };
       const response = await fetch(`${API_BASE}/api/labels/print`, {
         method: 'POST',
@@ -1208,7 +1231,27 @@ function App() {
             </button>
           </form>
 
-          <h3>Labels</h3>
+          <div className="table-toolbar">
+            <h3>Labels</h3>
+            <div className="table-toolbar-actions">
+              <button
+                type="button"
+                className="ghost-button"
+                onClick={selectAllLabels}
+                disabled={!labels.length}
+              >
+                Select all
+              </button>
+              <button
+                type="button"
+                className="ghost-button"
+                onClick={clearLabelSelection}
+                disabled={!selectedLabels.length}
+              >
+                Clear selection
+              </button>
+            </div>
+          </div>
           <div className="table">
             <div className="table-row table-head">
               <span>Select</span>
@@ -1440,6 +1483,13 @@ function App() {
             <span>{selectedLabels.length} labels selected</span>
           </div>
           <p>Select labels from the New label tab and adjust copies, then export a PDF.</p>
+          <div className="queue-layout-select">
+            <span>Labels per page</span>
+            <select value={labelsPerPage} onChange={(event) => setLabelsPerPage(Number(event.target.value))}>
+              <option value={12}>12 labels (2 × 6)</option>
+              <option value={10}>10 labels (2 × 5)</option>
+            </select>
+          </div>
           <div className="queue-list">
             {queueItems.length ? (
               queueItems.map(({ label, copies }) => (
